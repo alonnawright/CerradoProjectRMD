@@ -1,0 +1,258 @@
+---
+title: "Cerrado Project - 16S rRNA analysis"
+author: "Alonna Wright"
+date: "September 7, 2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+---
+title: "Cerrado Project - 16S rRNA Analysis"
+author: "Alonna Wright"
+date: "September 7, 2018"
+output: 
+  html_notebook:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The following code originated from the [dada2 pipeline tutorial](https://benjjneb.github.io/dada2/tutorial.html), unless otherwise noted.
+
+## Installing and loading necessary packages
+
+```{r install_packages}
+source("https://bioconductor.org/biocLite.R")
+biocLite()
+biocLite("dada2")
+biocLite("phyloseq")
+biocLite("metagenomeSeq")
+biocLite("IRanges")
+```
+
+
+```{r load_libraries} 
+message = FALSE
+
+library(dada2)
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(data.table)
+library(devtools)
+library(microbiome)
+library(knitr)
+library(RVAideMemoire)
+library(dplyr)
+library(grid)
+library(metagenomeSeq)
+
+```
+
+# 16S rRNA Pre-processing 
+
+Designate the directory in which you'll be working in, this should be the one that contains your sequencing data. Confirm your in the correct directory and all of your files are present by listing the files in the working directory. 
+
+```{r set_directory}
+path <- "/Users/Alonna/Desktop/Grad_School/Rodrigues Lab Dissertation Work/AW_CerradoProject/CerradoProjectRMD/Cerrado16SAnalysis"
+setwd(path)
+list.files(path)
+```
+Even though our files are compressed into .gz format, there is no need to unzip them.
+
+## Sorting .fastq files by forward and reverse
+
+Separating sequencing files by forward or reverse reads. The naming pattern indicates whether a file is a forward (R1) or a reverse (R2), so we'll make two different lists by recognizing that pattern. 
+
+```{r fwdrev_sort}
+fnFs <- sort(list.files(path, pattern = "_R1_001.fastq", full.names=TRUE))
+fnRs <- sort(list.files(path, pattern = "_R2_001.fastq", full.names=TRUE))
+
+```
+
+Sample names are also indicated in the file names, so we'll extract those as well. 
+
+```{r extract_filenames}
+sample.names <- sapply(strsplit(basename(fnFs), "_"), '[', 1)
+```
+
+## Visualizing quality of the forward and reverse reads
+
+Knowing how high of quality our reads are will help inform where (and if) to trim the reads to only work with high quality sequences. 
+
+###Forward Read Quality
+```{r fwd_qualityplot}
+plotQualityProfile(fnFs[1:10])
+```
+Since these forward reads look relatively high quality, we'll only trim the last 10bp off. 
+
+###Reverse Read Quality
+```{r rev_qualityplot}
+plotQualityProfile(fnRs[1:10])
+```
+
+These reads start to lose their quality toward the end of the sequences, so we'll trim off 175bp off the end.  When trimming, you must make sure that your reads still have enough overlap between forward and reverse. 
+
+## Filter and Trim
+
+Create a directory where filtered files will be stored, and designate names for these new filtered files. 
+
+```{r filt_sort}
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+
+```
+
+Using the information gathered from the quality reads above, the files will be trimmed. 240 base length for forward reads, 175 base length for reverse reads, no ambiguous bases, and truncated after the first instance of a base quality less than or equal to Q=2.
+
+```{r filtertrim}
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(240,175),
+                     maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE, 
+                     compress = TRUE, multithread = FALSE) #On Windows set multithread = FALSE
+head(out)
+cat("Total reads (in, out) =", colSums(out, na.rm = FALSE, dims=1), "Mean reads = (in, out)", colMeans(out, na.rm = FALSE, dims=1))
+
+```
+
+##Learning error rates
+
+This step trains the alogirthm to learn the errors of the reads.  (This step is computationally intensive if you're on a personal computer)
+```{r learnerrors}
+errF <- learnErrors(filtFs, multithread = TRUE, nbases = 1e+15)
+errR <- learnErrors(filtRs, multithread = TRUE, nbases = 1e+15)
+
+```
+
+Now, we want to visualize those errors. Ideally, the consensus quality score would line up with the red ideal line, but these results are relatively close. 
+
+```{r ploterrors}
+warning = FALSE
+
+plotErrors(errF, nominalQ = TRUE)
+plotErrors(errR, nominalQ = TRUE)
+
+```
+
+##Dereplicating fastq files
+
+```{r derep}
+derepFs <- derepFastq(filtFs, verbose = TRUE)
+derepRs <- derepFastq(filtRs, verbose = TRUE)
+```
+
+```{r }
+names(derepFs) <- sample.names
+names(derepRs) <- sample.names
+```
+
+## dada2 
+Sequences are now put through the dada2 algorithm to determine their exact sequence variants.
+
+```{r dada}
+dadaFs <- dada(derepFs, err=errF, multithread = TRUE)
+dadaRs <- dada(derepRs, err=errR, multithread = TRUE)
+dadaFs[[1]]
+```
+ 
+ Now we merge the forward and reverse pairs of the exact sequence variants. 
+ 
+```{r mergepairs}
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose = TRUE)
+
+
+head(mergers[[1]])
+```
+ 
+ ## Generating sequence table 
+ Here the sequence table is generated and restricted to only those sequences that fall in the range of 249bp to 258bp, since the target sequence length is 250bp.
+ 
+```{r seqtable}
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+table(nchar(getSequences(seqtab)))
+seqtab2 <- seqtab[,nchar(colnames(seqtab)) %in% seq(249,258)]
+```
+ 
+ ## Remove any chimeras
+```{r removechimeras}
+seqtab.nochim <- removeBimeraDenovo(seqtab2, method = "consensus", multithread = TRUE, verbose = TRUE)
+dim(seqtab.nochim)
+cat("Ratio of sequences without chimeras to all sequences =", sum(seqtab.nochim)/sum(seqtab2))
+cat("\nTotal number of unique features = ", sum(seqtab.nochim))
+```
+ The ratio all sequnces to the subset without chimeras determined that approximately 10.7% (1 - ratio * 100) of the total sequences are accounted for by chimeras. 
+ 
+## Tracking sample numbers through the quality control processes
+
+```{r tracksamples}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+```
+
+ 
+##Assign taxonomy
+
+```{r assigntaxonomy}
+taxa <- assignTaxonomy(seqtab.nochim, "/Users/Alonna/Desktop/Grad_School/Rodrigues Lab Dissertation Work/AW_CerradoProject/CerradoProjectRMD/silva_nr_v132_train_set.fa.gz", multithread=TRUE)
+
+```
+
+```{r}
+taxa <- addSpecies(taxa, "/Users/Alonna/Desktop/Grad_School/Rodrigues Lab Dissertation Work/AW_CerradoProject/CerradoProjectRMD/silva_species_assignment_v132.fa.gz")
+```
+
+#Phyloseq Analysis
+
+Using the data generated from the dada2 pipeline, a phyloseq object was created for further analysis. 
+
+```{r phyloseq_object}
+metadata <- read.csv2("AW_CerradoMeta_1_nounits.csv", header=TRUE, sep = ",", fileEncoding="UTF-8-BOM")
+
+rownames(metadata) <- paste0(metadata$SampleID)
+rownames(seqtab.nochim) <- sapply(strsplit(row.names(seqtab.nochim), "_"), '[', 1)
+
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
+                  sample_data(metadata), 
+                  tax_table(taxa))
+```
+
+
+##metagenomeSeq normalization
+
+Here the phyloseq object is transformed into a metagenomeSeq object for normalization.  The normalization factor is calculated, and then applied to the object. A matrix of these normalized values are then output for futher analysis. 
+```{r metagenomeSeq_normalization}
+ps.ms <- phyloseq_to_metagenomeSeq(ps)
+
+ps.ms_normfactor <- cumNormStat(ps.ms)
+cat("Normalization factor =", ps.ms_normfactor)
+ps.ms.norm <- cumNorm(ps.ms, p = ps.ms_normfactor)
+normalizedMatrix <- MRcounts(ps.ms.norm, norm = TRUE)
+```
+
+###Normalized phyloseq object
+Now the object that was normalized above will be integrated into a new phyloseq object
+```{r normalized_phyloseq}
+ps_trans <- ps
+otu_table(ps_trans) <- otu_table(normalizedMatrix, taxa_are_rows = TRUE)
+```
+
+##Shannon diversity index
+
+```{r}
+
+```
+
+#Statistical Analysis
+
+##PERMANOVA
+```{r}
+
+```
+
