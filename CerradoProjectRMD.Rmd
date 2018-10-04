@@ -292,17 +292,23 @@ otu_table(ps_trans) <- otu_table(normalizedMatrix, taxa_are_rows = TRUE)
 
 ##PERMANOVA using adonis
 
-Since there are some variables that are do not contain data for some samples, all statistical analyses must be preceded by a subsetted table for that variable, to only test samples who have values for that variable. Since reveg samples are the only ones with  flora data, we will subset those to come back to later. 
+Since there are some variables that are do not contain data for some samples, all statistical analyses must be preceded by a subsetted table for that variable, to only test samples who have values for that variable. Since reveg samples are the only ones with  flora data, we will subset those to come back to later. Since there is a large chunk of data missing for 2005, this applies as well. 
 ```{r}
 metadata_reveg_subset <- metadata[complete.cases(metadata$C3_herbs),]
-ps_trans@sam_data[["time_since_restoration"]] <- NULL
-ps_trans@sam_data[["C3_herbs"]] <- NULL
-ps_trans@sam_data[["C3_woody"]] <- NULL
-ps_trans@sam_data[["C4_invasive"]] <- NULL
+
+metadata_no2005 <- metadata[metadata$year != "2005",]
+
+ps_trans_completeVariables <- ps_trans
+sample_data(ps_trans_completeVariables) <- sample_data(metadata_no2005)
+
+ps_trans_completeVariables@sam_data[["time_since_restoration"]] <- NULL
+ps_trans_completeVariables@sam_data[["C3_herbs"]] <- NULL
+ps_trans_completeVariables@sam_data[["C3_woody"]] <- NULL
+ps_trans_completeVariables@sam_data[["C4_invasive"]] <- NULL
 
 
-adonis(distance(ps_trans, method="bray") ~ soil_type, data = metadata, permutations = 10000)
-adonis(distance(ps_trans, method="bray") ~ year, data = metadata, permutations = 10000)
+adonis(distance(ps_trans_completeVariables, method="bray") ~ soil_type, data = metadata_no2005, permutations = 10000)
+adonis(distance(ps_trans_completeVariables, method="bray") ~ year, data = metadata_no2005, permutations = 10000)
 ```
 
 ##Pairwise PERMANOVA
@@ -312,35 +318,20 @@ This is a custom function developed by Julio Cezar Fornazier (jfornazier@ucdavis
 ```{r pariwise.adonis}
 #below: whole script outputs p-values, f-values, and R squared values for each pairwise comparison
 
-
-
-
-
 #Use the function pairwise.adonis() with following arguments
 
-#
 
 #x = community table
 
-#
-
 #factors = a column or vector with all factors to be tested pairwise
-
-#
 
 #sim.function = which function to calculate the similarity matrix. eg 'daisy' or 'vegdist' default is 'vegdist'
 
 # NOTE that if you wnat to use daisy, you need to install library 'cluster'
 
-#
-
 #sim.method = similarity method from daisy or vegdist: default is 'bray' 
 
-#
-
 #p.adjust.m = the p.value correction method, one of the methods supported by p.adjust(); default is 'bonferroni'
-
-#
 
 #The function will return a table with the pairwise factors, F-values, R^2, p.value and adjusted p.value
 
@@ -357,7 +348,6 @@ This is a custom function developed by Julio Cezar Fornazier (jfornazier@ucdavis
 # example:
 
 # data(iris)
-
 # pairwise.adonis(iris[,1:4],iris$Species)
 
 #
@@ -365,32 +355,20 @@ This is a custom function developed by Julio Cezar Fornazier (jfornazier@ucdavis
 #[1] "Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1"
 
 #                    pairs    F.Model        R2 p.value p.adjusted sig
-
 #1    setosa vs versicolor  552.51266 0.8493496   0.001      0.003   *
-
 #2     setosa vs virginica 1001.54509 0.9108722   0.001      0.003   *
-
 #3 versicolor vs virginica   91.82959 0.4837475   0.001      0.003   *
 
 
-
 # similarity euclidean from vegdist and holm correction
-
 # pairwise.adonis(x=iris[,1:4],factors=iris$Species,sim.function='vegdist',sim.method='euclidian',p.adjust.m='holm')
 
 
-
 # similarity manhattan from daisy and bonferroni correction
-
 # pairwise.adonis(x=iris[,1:4],factors=iris$Species,sim.function='daisy',sim.method='manhattan',p.adjust.m='bonferroni')
 
 ##############################
 
-
-
-
-
-##start copy here for function pairwise.adonis()
 
 pairwise.adonis <- function(x,factors, sim.function = 'vegdist', sim.method = 'bray', p.adjust.m ='bonferroni')
 
@@ -398,40 +376,22 @@ pairwise.adonis <- function(x,factors, sim.function = 'vegdist', sim.method = 'b
 
   library(vegan)
 
-  
-
   co = combn(unique(as.character(factors)),2)
-
   pairs = c()
-
   F.Model =c()
-
   R2 = c()
-
   p.value = c()
 
-  
-
-  
 
   for(elem in 1:ncol(co)){
-
     if(sim.function == 'daisy'){
-
       library(cluster); x1 = daisy(x[factors %in% c(co[1,elem],co[2,elem]),],metric=sim.method)
-
     } else{x1 = vegdist(x[factors %in% c(co[1,elem],co[2,elem]),],method=sim.method)}
 
-    
-
     ad = adonis(x1 ~ factors[factors %in% c(co[1,elem],co[2,elem])] );
-
     pairs = c(pairs,paste(co[1,elem],'vs',co[2,elem]));
-
     F.Model =c(F.Model,ad$aov.tab[1,4]);
-
     R2 = c(R2,ad$aov.tab[1,5]);
-
     p.value = c(p.value,ad$aov.tab[1,6])
 
   }
@@ -462,8 +422,10 @@ pairwise.adonis <- function(x,factors, sim.function = 'vegdist', sim.method = 'b
 
 ```
 
+
+
 ```{r pairwise.adonis_run}
-pairwise.adonis(seqtab.nochim, treatments, sim.function = 'vegdist', sim.method = 'bray', p.adjust.m ='bonferroni')
+pairwise.adonis(normalizedMatrix, metadata_no2005$soil_type, sim.function = 'vegdist', sim.method = 'bray', p.adjust.m ='bonferroni')
 ```
 
 
@@ -476,9 +438,9 @@ svg(file="Name.svg",
 
 ##Plotting Stacked Bar Plot
 ```{r stackedbarplot}
-TopNOTUs = names(sort(taxa_sums(ps), TRUE)[1:50])
+TopNOTUs = names(sort(taxa_sums(ps_trans), TRUE)[1:50])
 
-ent10 = prune_taxa(TopNOTUs, ps)
+ent10 = prune_taxa(TopNOTUs, ps_trans)
 phylumGlommed = tax_glom(ent10, "Phylum")
 
 plot_bar(phylumGlommed, x="soil_year", fill="Phylum") + 
@@ -493,5 +455,116 @@ plot_bar(phylumGlommed, x="soil_year", fill="Phylum") +
 
 
 ##BetaDisper Script 
-Generates a Bray-Curtis NMDS with vectors for factors that are determined to be significant
+Generates a Bray-Curtis NMDS with vectors for factors that are determined to be significant.
+
+###Soil Bray-Curtis
+```{r soil_NMDS}
+#subset phyloseq object by sample type
+ps.reveg <- subset_samples(ps_trans, soil_type=="Revegetation")
+ps.soil <- subset_samples(ps_trans, soil_type=="Soil")
+ps.substr <- subset_samples(ps_trans, soil_type=="Substrate")
+
+#By Soil - Calculations of Bray-Curtis distances
+bray.soil <- phyloseq::distance(ps.soil, method = "bray")
+# ?distanceMethodList
+md.sample.type.soil <- data.frame(sample_data(ps.soil))
+bd.soil <-betadisper(bray.soil, md.sample.type.soil$year) #bray distances of soil 
+permutest(bd.soil)
+
+#NMDS of B-C distances of Soil by Year
+plot(bd.soil,
+     main = "Bray Distances of Soil by Year")
+
+
+```
+
+```{r soil_boxplotTukey}
+boxplot(bd.soil)
+TukeyHSD(bd.soil)
+```
+```{r soil_dataframe}
+plot.bd.soil <- data.frame(bd = bd.soil$distances)
+plot.bd.soil$year <- bd.soil$group
+plot.bd.soil$Sample.type <- "Soil"
+```
+
+```{r soil_linearmodel}
+soil_lm <-lm(bd ~ year, data = plot.bd.soil)
+plot(soil_lm)
+```
+
+###Revegetation Bray-Curtis
+
+```{r reveg_NMDS}
+bray.reveg <- phyloseq::distance(ps.reveg, method = "bray")
+md.sample.type.reveg <- data.frame(sample_data(ps.reveg))
+bd.reveg <-betadisper(bray.reveg, md.sample.type.reveg$year) #bray distances of reveg 
+permutest(bd.reveg)
+
+plot(bd.reveg,
+     main = "Bray Distances of Revegetation by Year")
+
+```
+
+```{r reveg_boxplotTukey}
+boxplot(bd.reveg)
+TukeyHSD(bd.reveg)
+```
+
+```{r reveg_dataframe}
+plot.bd.reveg <- data.frame(bd = bd.reveg$distances)
+plot.bd.reveg$year <- bd.reveg$group
+plot.bd.reveg$Sample.type <- "Revegetation"
+```
+
+```{r reveg_linearmodel}
+reveg_lm <-lm(bd ~ year, data = plot.bd.reveg) #linear model - if data has normal distribution
+plot(reveg_lm)
+```
+
+###Substrate Bray-Curtis
+
+```{r substrate_NMDS}
+bray.substr <- phyloseq::distance(ps.substr, method = "bray")
+md.sample.type.substr <- data.frame(sample_data(ps.substr))
+bd.substr <-betadisper(bray.substr, md.sample.type.substr$year) #bray distances of substr 
+permutest(bd.substr)
+
+plot(bd.substr,
+     main = "Bray Distances of Substrate by Year")
+```
+
+```{r substrate_boxplotTukey}
+boxplot(bd.substr)
+TukeyHSD(bd.substr)
+```
+
+```{r substrate_dataframe}
+plot.bd.substr <- data.frame(bd = bd.substr$distances)
+plot.bd.substr$year <- bd.substr$group
+plot.bd.substr$Sample.type <- "Substrate"
+
+```
+
+```{r substrate_linearmodel}
+substrate_lm <-lm(bd ~ year, data = plot.bd.substr) 
+plot(substrate_lm)
+```
+
+##Merged Bray-Curtis analyses
+
+###Merging the individual data frames back together. 
+```{r}
+plot.bd.merged <- rbind(plot.bd.soil, plot.bd.reveg, plot.bd.substr)
+
+aggregate(bd ~ Sample.type + year, data = plot.bd.merged, mean)
+```
+
+###Kruskal Tests on Bray-Curtis values
+Technically the first character should be the numeric vector, but for some reason it isn't accepting that. 
+```{r kruskal_BrayCurtis}
+
+kruskal.test(Sample.type ~ bd, data = plot.bd.merged)
+kruskal.test(year ~ bd, data = plot.bd.merged)
+```
 
