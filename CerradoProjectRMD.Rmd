@@ -33,7 +33,7 @@ biocLite("phyloseq")
 biocLite("metagenomeSeq")
 biocLite("IRanges")
 ```
-
+If packages weren't installed from biocLite above, they were found in the CRAN repository or through github directly from the developer. 
 
 ```{r load_libraries} 
 message = FALSE
@@ -53,7 +53,7 @@ library(metagenomeSeq)
 
 ```
 
-# 16S rRNA Pre-processing 
+# 16S sequence Pre-processing 
 
 Designate the directory in which you'll be working in, this should be the one that contains your sequencing data. Confirm your in the correct directory and all of your files are present by listing the files in the working directory. 
 
@@ -204,7 +204,7 @@ taxa <- assignTaxonomy(seqtab.nochim, "/Users/Alonna/Desktop/Grad_School/Rodrigu
 
 ```
 
-```{r}
+```{r addSpecies}
 taxa <- addSpecies(taxa, "/Users/Alonna/Desktop/Grad_School/Rodrigues Lab Dissertation Work/AW_CerradoProject/CerradoProjectRMD/silva_species_assignment_v132.fa.gz")
 ```
 
@@ -213,7 +213,7 @@ taxa <- addSpecies(taxa, "/Users/Alonna/Desktop/Grad_School/Rodrigues Lab Disser
 Using the data generated from the dada2 pipeline, a phyloseq object was created for further analysis. 
 
 ```{r phyloseq_object}
-metadata <- read.csv2("AW_CerradoMeta_1_nounits.csv", header=TRUE, sep = ",", fileEncoding="UTF-8-BOM")
+metadata <- read.csv2("AW_CerradoMeta_2.csv", header=TRUE, sep = ",", fileEncoding="UTF-8-BOM")
 
 rownames(metadata) <- paste0(metadata$SampleID)
 rownames(seqtab.nochim) <- sapply(strsplit(row.names(seqtab.nochim), "_"), '[', 1)
@@ -222,6 +222,49 @@ ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE),
                   sample_data(metadata), 
                   tax_table(taxa))
 ```
+
+##Exact Sequence Variant (ESV) values
+For each unqiue ESV, the abundance is recorded.  This number is calculated as a sum of ESV occurence across all samples. 
+```{r esv_values }
+taxacounts <- as.matrix(taxa_sums(ps))
+```
+
+##Shannon diversity index
+This calculates the Shannon richness for each individual sample and returns that value to a table. Richness can only be calculated on integers. Normalization introduces decimal counts, so this has to be calculated with the original, non-normalized, phyloseq object. 
+```{r shannon_diversity}
+tab <- estimate_richness(ps, split = TRUE, measures = "Shannon")
+
+alpha_tab <- cbind(tab, soil_type = metadata$soil_type [match(rownames(tab), rownames(metadata))])
+alpha_tab <- cbind(alpha_tab, year = metadata$year [match(rownames(tab), rownames(metadata))])
+alpha_tab <- cbind(alpha_tab, soil_year = metadata$soil_year [match(rownames(tab), rownames(metadata))])
+
+hist(alpha_tab$Shannon)
+
+ggplot(alpha_tab,
+       aes(x = soil_type, y=Shannon, fill=soil_type)) +
+  ggtitle("Shannon Alpha Diversity Measures") +
+  # theme(plot.title = element_text(hjust = "inward")) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha=0.5, size=2, pch=21) +
+  # scale_fill_manual(values=c(st.colors))+
+  #scale_x_discrete("Year", labels = c("1997", "2002", "2003", "2008", "2011", "2015")) +
+  xlab("") +
+  ylab("Alpha Diversity Measure") +
+  theme_bw()+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="none", 
+        axis.text.x = element_text(angle = 0, hjust = 0.5, size=12, color = "black"), 
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"))
+
+
+```
+
+
+This error message is occuring because DADA2 as an algorithm does not call singletons, "due to the difficulty of differentiating rare singleton errors from real singleton variants" (from DADA2's creator, https://github.com/benjjneb/dada2/issues/214).  Since Shannon richness does not rely heavily on singletons, this is fine to ignore and move forward. 
+
+Since this histogram is skewed to the left, the distribution isn't normal, and therefore ANOVA is not the optimal test.  We will opt for using the Kruskal-Wallis test. 
 
 
 ##metagenomeSeq normalization
@@ -243,16 +286,212 @@ ps_trans <- ps
 otu_table(ps_trans) <- otu_table(normalizedMatrix, taxa_are_rows = TRUE)
 ```
 
-##Shannon diversity index
 
-```{r}
-
-```
 
 #Statistical Analysis
 
-##PERMANOVA
+##PERMANOVA using adonis
+
+Since there are some variables that are do not contain data for some samples, all statistical analyses must be preceded by a subsetted table for that variable, to only test samples who have values for that variable. Since reveg samples are the only ones with  flora data, we will subset those to come back to later. 
 ```{r}
+metadata_reveg_subset <- metadata[complete.cases(metadata$C3_herbs),]
+ps_trans@sam_data[["time_since_restoration"]] <- NULL
+ps_trans@sam_data[["C3_herbs"]] <- NULL
+ps_trans@sam_data[["C3_woody"]] <- NULL
+ps_trans@sam_data[["C4_invasive"]] <- NULL
+
+
+adonis(distance(ps_trans, method="bray") ~ soil_type, data = metadata, permutations = 10000)
+adonis(distance(ps_trans, method="bray") ~ year, data = metadata, permutations = 10000)
+```
+
+##Pairwise PERMANOVA
+
+This is a custom function developed by Julio Cezar Fornazier (jfornazier@ucdavis.edu)
+
+```{r pariwise.adonis}
+#below: whole script outputs p-values, f-values, and R squared values for each pairwise comparison
+
+
+
+
+
+#Use the function pairwise.adonis() with following arguments
+
+#
+
+#x = community table
+
+#
+
+#factors = a column or vector with all factors to be tested pairwise
+
+#
+
+#sim.function = which function to calculate the similarity matrix. eg 'daisy' or 'vegdist' default is 'vegdist'
+
+# NOTE that if you wnat to use daisy, you need to install library 'cluster'
+
+#
+
+#sim.method = similarity method from daisy or vegdist: default is 'bray' 
+
+#
+
+#p.adjust.m = the p.value correction method, one of the methods supported by p.adjust(); default is 'bonferroni'
+
+#
+
+#The function will return a table with the pairwise factors, F-values, R^2, p.value and adjusted p.value
+
+#
+
+# load in runnig R session with: 
+
+# source('pairwise.adonis.txt')
+
+#
+
+
+
+# example:
+
+# data(iris)
+
+# pairwise.adonis(iris[,1:4],iris$Species)
+
+#
+
+#[1] "Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1"
+
+#                    pairs    F.Model        R2 p.value p.adjusted sig
+
+#1    setosa vs versicolor  552.51266 0.8493496   0.001      0.003   *
+
+#2     setosa vs virginica 1001.54509 0.9108722   0.001      0.003   *
+
+#3 versicolor vs virginica   91.82959 0.4837475   0.001      0.003   *
+
+
+
+# similarity euclidean from vegdist and holm correction
+
+# pairwise.adonis(x=iris[,1:4],factors=iris$Species,sim.function='vegdist',sim.method='euclidian',p.adjust.m='holm')
+
+
+
+# similarity manhattan from daisy and bonferroni correction
+
+# pairwise.adonis(x=iris[,1:4],factors=iris$Species,sim.function='daisy',sim.method='manhattan',p.adjust.m='bonferroni')
+
+##############################
+
+
+
+
+
+##start copy here for function pairwise.adonis()
+
+pairwise.adonis <- function(x,factors, sim.function = 'vegdist', sim.method = 'bray', p.adjust.m ='bonferroni')
+
+{
+
+  library(vegan)
+
+  
+
+  co = combn(unique(as.character(factors)),2)
+
+  pairs = c()
+
+  F.Model =c()
+
+  R2 = c()
+
+  p.value = c()
+
+  
+
+  
+
+  for(elem in 1:ncol(co)){
+
+    if(sim.function == 'daisy'){
+
+      library(cluster); x1 = daisy(x[factors %in% c(co[1,elem],co[2,elem]),],metric=sim.method)
+
+    } else{x1 = vegdist(x[factors %in% c(co[1,elem],co[2,elem]),],method=sim.method)}
+
+    
+
+    ad = adonis(x1 ~ factors[factors %in% c(co[1,elem],co[2,elem])] );
+
+    pairs = c(pairs,paste(co[1,elem],'vs',co[2,elem]));
+
+    F.Model =c(F.Model,ad$aov.tab[1,4]);
+
+    R2 = c(R2,ad$aov.tab[1,5]);
+
+    p.value = c(p.value,ad$aov.tab[1,6])
+
+  }
+
+  p.adjusted = p.adjust(p.value,method=p.adjust.m)
+
+  sig = c(rep('',length(p.adjusted)))
+
+  sig[p.adjusted <= 0.05] <-'.'
+
+  sig[p.adjusted <= 0.01] <-'*'
+
+  sig[p.adjusted <= 0.001] <-'**'
+
+  sig[p.adjusted <= 0.0001] <-'***'
+
+  
+
+  pairw.res = data.frame(pairs,F.Model,R2,p.value,p.adjusted,sig)
+
+  print("Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1")
+
+  return(pairw.res)
+
+  
+
+} 
 
 ```
+
+```{r pairwise.adonis_run}
+pairwise.adonis(seqtab.nochim, treatments, sim.function = 'vegdist', sim.method = 'bray', p.adjust.m ='bonferroni')
+```
+
+
+
+#Graphing
+All of the graphs will be generated in the code below. Signigicance is not automatically denoted on the images, and will be added post generation, based off the results of the statistics above. To generate an SVG from this code put in the following code at the beginning of the graphing code, followed by dev.off() immediately following the graphing code.
+
+svg(file="Name.svg",
+    width=5,height=6,bg = "transparent")
+
+##Plotting Stacked Bar Plot
+```{r stackedbarplot}
+TopNOTUs = names(sort(taxa_sums(ps), TRUE)[1:50])
+
+ent10 = prune_taxa(TopNOTUs, ps)
+phylumGlommed = tax_glom(ent10, "Phylum")
+
+plot_bar(phylumGlommed, x="soil_year", fill="Phylum") + 
+  facet_grid(~soil_type, scales = "free") +
+  xlab("Year") +
+  ggtitle("Phylum Abundance")+
+ scale_x_discrete(labels = c("1997", "2002", "2003", "2005", "2008", "2011", "2015"))
+
+
+```
+
+
+
+##BetaDisper Script 
+Generates a Bray-Curtis NMDS with vectors for factors that are determined to be significant
 
