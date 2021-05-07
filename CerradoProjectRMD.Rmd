@@ -1,49 +1,50 @@
 ---
 title: "Cerrado Project - 16S rRNA analysis"
-author: "Alonna Wright"
-date: "September 7, 2018"
-output:
-  html_document: default
-  pdf_document: default
----
-
----
-title: "Cerrado Project - 16S rRNA Analysis"
-author: "Alonna Wright"
-date: "September 7, 2018"
 output: 
-  html_notebook:
+  html_document:
+    code_folding: hide
     toc: true
     toc_float: true
+    toc_depth: 2
+author: "Alonna Wright"
+date: "September 7, 2018, latest update: December 17, 2020 - Jan 30, 2021"
 ---
 
 ```{r setup, include=FALSE}
+install.packages("knitr")
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-The following code originated from the [dada2 pipeline tutorial](https://benjjneb.github.io/dada2/tutorial.html), unless otherwise noted.
+```{r setting CRAN repository}
+local({r <- getOption("repos")
+       r["CRAN"] <- "http://cran.r-project.org" 
+       options(repos=r)
+})
+```
+
+
 
 ## Installing and loading necessary packages
 
-```{r install_packages}
+```{r install_packages, message=FALSE, warning=FALSE}
+
 
 if (!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
-BiocManager::install("IRanges", version = "3.8")
-BiocManager::install("Biostrings", version = "3.8")
-BiocManager::install("rhdf5", version = "3.8")
-source("https://bioconductor.org/biocLite.R")
-biocLite()
-biocLite("dada2")
-biocLite("rhdf5")
-biocLite("phyloseq")
-biocLite("metagenomeSeq")
-biocLite("IRanges")
-biocLite("msa")
+BiocManager::install("IRanges")
+BiocManager::install("Biostrings")
+BiocManager::install("rhdf5")
+BiocManager::install("DESeq2")
+BiocManager::install("phyloseq")
+BiocManager::install("dada2")
+BiocManager::install("msa")
+BiocManager::install("metagenomeSeq")
+BiocManager::install("lefser")
+install.packages("ps")
 install.packages("devtools")
 install.packages("tidyverse")
 install.packages("dplyr")
-install.packages("ps")
+install.packages("plyr")
 install.packages("phangorn")
 install.packages("TITAN2")
 install.packages("labdsv")
@@ -54,12 +55,20 @@ install.packages("rfUtilities")
 install.packages("caret")
 install.packages("e1071")
 install.packages("RColorBrewer")
-devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+install.packages("pheatmap")
+install.packages("RVAideMemoire")
+install.packages("indicspecies")
+install.packages("gss")
+# devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+devtools::install_github("tidyverse/ggplot2")
+devtools::install_github("ying14/yingtools2")
+# devtools::install_github("slowkow/ggrepel")
+devtools::install_github("yiluheihei/microbiomeMarker")
+devtools::install_github("aametwally/MetaLonDA", ref = "master")
 
 ```
 
-```{r load_libraries} 
-message = FALSE
+```{r load_libraries, message=FALSE, warning=FALSE}
 
 library(devtools)
 library(dada2)
@@ -74,7 +83,7 @@ library(plyr)
 library(dplyr)
 library(grid)
 library(metagenomeSeq)
-library(pairwiseAdonis)
+# library(pairwiseAdonis)
 library(phangorn)
 library(msa)
 library(labdsv)
@@ -86,9 +95,22 @@ library(rfUtilities)
 library(caret)
 library(e1071)
 library(RColorBrewer)
+library(ggrepel)
+library(pheatmap)
+library(RVAideMemoire)
+library(indicspecies)
+library(DESeq2)
+library(tidyverse)
+# library(lefser)
+# library(yingtools2)
+library(microbiomeMarker)
+library(gss)
+library(MetaLonDA)
 ```
 
 # 16S sequence Pre-processing 
+
+The following code originated from the [dada2 pipeline tutorial](https://benjjneb.github.io/dada2/tutorial.html), unless otherwise noted.
 
 Designate the directory in which you'll be working in, this should be the one that contains your sequencing data. Confirm your in the correct directory and all of your files are present by listing the files in the working directory. 
 
@@ -103,7 +125,7 @@ Even though our files are compressed into .gz format, there is no need to unzip 
 
 Separating sequencing files by forward or reverse reads. The naming pattern indicates whether a file is a forward (R1) or a reverse (R2), so we'll make two different lists by recognizing that pattern. 
 
-```{r fwdrev_sort}
+```{r fwdrev_sort, eval=FALSE, include=FALSE}
 fnFs <- sort(list.files(path, pattern = "_R1_001.fastq", full.names=TRUE))
 fnRs <- sort(list.files(path, pattern = "_R2_001.fastq", full.names=TRUE))
 
@@ -111,7 +133,7 @@ fnRs <- sort(list.files(path, pattern = "_R2_001.fastq", full.names=TRUE))
 
 Sample names are also indicated in the file names, so we'll extract those as well. 
 
-```{r extract_filenames}
+```{r extract_filenames, eval=FALSE, include=FALSE}
 sample.names <- sapply(strsplit(basename(fnFs), "_"), '[', 1)
 ```
 
@@ -119,14 +141,14 @@ sample.names <- sapply(strsplit(basename(fnFs), "_"), '[', 1)
 
 Knowing how high of quality our reads are will help inform where (and if) to trim the reads to only work with high quality sequences. 
 
-###Forward Read Quality
-```{r fwd_qualityplot}
+### Forward Read Quality
+```{r fwd_qualityplot, eval=FALSE, include=FALSE}
 plotQualityProfile(fnFs[1:10])
 ```
 Since these forward reads look relatively high quality, we'll only trim the last 10bp off. 
 
-###Reverse Read Quality
-```{r rev_qualityplot}
+### Reverse Read Quality
+```{r rev_qualityplot, eval=FALSE, include=FALSE}
 plotQualityProfile(fnRs[1:10])
 ```
 
@@ -136,7 +158,7 @@ These reads start to lose their quality toward the end of the sequences, so we'l
 
 Create a directory where filtered files will be stored, and designate names for these new filtered files. 
 
-```{r filt_sort}
+```{r filt_sort, eval=FALSE, include=FALSE}
 filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
 filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
 
@@ -144,19 +166,20 @@ filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
 
 Using the information gathered from the quality reads above, the files will be trimmed. 240 base length for forward reads, 175 base length for reverse reads, no ambiguous bases, and truncated after the first instance of a base quality less than or equal to Q=2.
 
-```{r filtertrim}
+```{r filtertrim, eval=FALSE, include=FALSE}
 out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(240,175),
                      maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE, 
                      compress = TRUE, multithread = FALSE) #On Windows set multithread = FALSE
 head(out)
 cat("Total reads (in, out) =", colSums(out, na.rm = FALSE, dims=1), "Mean reads = (in, out)", colMeans(out, na.rm = FALSE, dims=1))
+readsIn.summary.sf <- summary(out[,1])
 
 ```
 
-##Learning error rates
+## Learning error rates
 
 This step trains the alogirthm to learn the errors of the reads.  (This step is computationally intensive if you're on a personal computer)
-```{r learnerrors}
+```{r learnerrors, eval=FALSE, include=FALSE}
 errF <- learnErrors(filtFs, multithread = TRUE, nbases = 1e+15)
 errR <- learnErrors(filtRs, multithread = TRUE, nbases = 1e+15)
 
@@ -164,7 +187,7 @@ errR <- learnErrors(filtRs, multithread = TRUE, nbases = 1e+15)
 
 Now, we want to visualize those errors. Ideally, the consensus quality score would line up with the red ideal line, but these results are relatively close. 
 
-```{r ploterrors}
+```{r ploterrors, eval=FALSE, include=FALSE}
 warning = FALSE
 
 plotErrors(errF, nominalQ = TRUE)
@@ -172,14 +195,14 @@ plotErrors(errR, nominalQ = TRUE)
 
 ```
 
-##Dereplicating fastq files
+## Dereplicating fastq files
 
-```{r derep}
+```{r derep, eval=FALSE, include=FALSE}
 derepFs <- derepFastq(filtFs, verbose = TRUE)
 derepRs <- derepFastq(filtRs, verbose = TRUE)
 ```
 
-```{r }
+```{r names derep, eval=FALSE, include=FALSE}
 names(derepFs) <- sample.names
 names(derepRs) <- sample.names
 ```
@@ -187,7 +210,7 @@ names(derepRs) <- sample.names
 ## dada2 
 Sequences are now put through the dada2 algorithm to determine their exact sequence variants.
 
-```{r dada}
+```{r dada, eval=FALSE, include=FALSE}
 dadaFs <- dada(derepFs, err=errF, multithread = TRUE)
 dadaRs <- dada(derepRs, err=errR, multithread = TRUE)
 dadaFs[[1]]
@@ -195,25 +218,25 @@ dadaFs[[1]]
  
  Now we merge the forward and reverse pairs of the exact sequence variants. 
  
-```{r mergepairs}
+```{r mergepairs, eval=FALSE, include=FALSE}
 mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose = TRUE)
 
 
 head(mergers[[1]])
 ```
  
- ## Generating sequence table 
- Here the sequence table is generated and restricted to only those sequences that fall in the range of 249bp to 258bp, since the target sequence length is 250bp.
+## Generating sequence table 
+Here the sequence table is generated and restricted to only those sequences that fall in the range of 249bp to 258bp, since the target sequence length is 250bp.
  
-```{r seqtable}
+```{r seqtable, eval=FALSE, include=FALSE}
 seqtab <- makeSequenceTable(mergers)
 dim(seqtab)
 table(nchar(getSequences(seqtab)))
 seqtab2 <- seqtab[,nchar(colnames(seqtab)) %in% seq(249,258)]
 ```
  
- ## Remove any chimeras
-```{r removechimeras}
+## Remove any chimeras
+```{r removechimeras, eval=FALSE, include=FALSE}
 seqtab.nochim <- removeBimeraDenovo(seqtab2, method = "consensus", multithread = TRUE, verbose = TRUE)
 dim(seqtab.nochim)
 cat("Ratio of sequences without chimeras to all sequences =", sum(seqtab.nochim)/sum(seqtab2))
@@ -223,7 +246,7 @@ cat("\nTotal number of unique features = ", sum(seqtab.nochim))
  
 ## Tracking sample numbers through the quality control processes
 
-```{r tracksamples}
+```{r tracksamples, eval=FALSE, include=FALSE}
 getN <- function(x) sum(getUniques(x))
 track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
 colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
@@ -231,26 +254,44 @@ rownames(track) <- sample.names
 head(track)
 ```
 
- 
+```{r eval=FALSE, include=FALSE}
+cat("Summary of inputted sequences \n")
+summary(track[,1])
+cat("Summary of filtered sequences \n")
+summary(track[,2])
+cat("Summary of sequences at every step in filtering \n")
+colSums(track)
+```
+
+
+
 ##Assign taxonomy
 
-```{r assigntaxonomy}
+```{r assigntaxonomy, eval=FALSE, include=FALSE}
 taxa <- assignTaxonomy(seqtab.nochim, "/Users/Alonna/Desktop/Grad_School/Rodrigues Lab Dissertation Work/AW_CerradoProject/CerradoProjectRMD/silva_nr_v132_train_set.fa.gz", multithread=TRUE)
 
 ```
 
-```{r addSpecies}
+```{r addSpecies, eval=FALSE, include=FALSE}
 taxa <- addSpecies(taxa, "/Users/Alonna/Desktop/Grad_School/Rodrigues Lab Dissertation Work/AW_CerradoProject/CerradoProjectRMD/silva_species_assignment_v132.fa.gz")
 ```
-##Create a Phylogenetic Tree
-```{r}
-# seqs <- getSequences(seqtab)
-# names(seqs) <- seqs # This propagates to the tip labels of the tree
-# mult <- msa(seqs, method="ClustalW", type="dna", order="input")
+
+## Writing out files
+For the sake of knitting this html document together, sequence and OTU tables were written out ahead of time and read into the document here. 
+
+```{r save RDS, eval=FALSE, include=FALSE}
+saveRDS(seqtab.nochim, paste0(path, "/seqtab.RDS"))
+saveRDS(taxa, paste0(path, "/taxa.RDS"))
+
+```
+
+```{r read RDS}
+taxa <- readRDS(paste(path, "taxa.rds", sep="/"))
+seqtab.nochim <- readRDS(paste(path, "seqtab.rds", sep="/"))
 ```
 
 
-#Phyloseq Analysis
+# Phyloseq Analysis
 
 Using the data generated from the dada2 pipeline, a phyloseq object was created for further analysis. 
 
@@ -265,13 +306,14 @@ ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE),
                   tax_table(taxa))
 ```
 
-##Exact Sequence Variant (ESV) values
-For each unqiue ESV, the abundance is recorded.  This number is calculated as a sum of ESV occurence across all samples. 
+## Exact Sequence Variant (ESV) values
+For each unqiue ESV, the abundance is recorded.  This number is calculated as a sum of ESV occurrence across all samples. 
 ```{r esv_values }
 taxacounts <- as.matrix(taxa_sums(ps))
+summary(taxacounts)
 ```
 
-##Shannon diversity index
+## Shannon diversity index
 This calculates the Shannon richness for each individual sample and returns that value to a table. Richness can only be calculated on integers. Normalization introduces decimal counts, so this has to be calculated with the original, non-normalized, phyloseq object. 
 ```{r shannon_diversity}
 tab <- estimate_richness(ps, split = TRUE, measures = "Shannon")
@@ -279,6 +321,12 @@ tab <- estimate_richness(ps, split = TRUE, measures = "Shannon")
 alpha_tab <- cbind(tab, soil_type = metadata$soil_type [match(rownames(tab), rownames(metadata))])
 alpha_tab <- cbind(alpha_tab, year = metadata$year [match(rownames(tab), rownames(metadata))])
 alpha_tab <- cbind(alpha_tab, soil_year = metadata$soil_year [match(rownames(tab), rownames(metadata))])
+```
+This error message is occuring because DADA2 as an algorithm does not call singletons, "due to the difficulty of differentiating rare singleton errors from real singleton variants" (from DADA2's creator, https://github.com/benjjneb/dada2/issues/214).  Since Shannon richness does not rely heavily on singletons, this is fine to ignore and move forward. 
+
+Since this histogram is skewed to the left, the distribution isn't normal, and therefore ANOVA is not the optimal test.  We will opt for using the Kruskal-Wallis test. 
+
+```{r shannon_diversity_graph}
 
 hist(alpha_tab$Shannon)
 
@@ -302,12 +350,37 @@ ggplot(alpha_tab,
 ```
 
 
-This error message is occuring because DADA2 as an algorithm does not call singletons, "due to the difficulty of differentiating rare singleton errors from real singleton variants" (from DADA2's creator, https://github.com/benjjneb/dada2/issues/214).  Since Shannon richness does not rely heavily on singletons, this is fine to ignore and move forward. 
-
-Since this histogram is skewed to the left, the distribution isn't normal, and therefore ANOVA is not the optimal test.  We will opt for using the Kruskal-Wallis test. 
 
 
-##metagenomeSeq normalization
+```{r shannon diversity over time}
+
+ggplot(alpha_tab,
+       aes(x = year, y=Shannon, color=soil_type)) +
+  ggtitle("Shannon Alpha Diversity Measures over Time") +
+  geom_jitter(alpha=1, size=2, pch=21) +
+  stat_summary(fun.y="mean", geom="line")+
+  scale_x_continuous("Year",breaks=unique(alpha_tab$year))+
+  ylab("Alpha Diversity Measure") +
+  scale_colour_brewer(palette = "Dark2", name = "Soil Type")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="right",
+        axis.text.x = element_text(angle = 45, hjust = 0.5, size=12, color = "black"),
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"))
+```
+
+### Kruskal test on Shannon Diversity Values
+```{r kruskal shannon by soil type}
+kruskal.test(Shannon~soil_type, data = alpha_tab)
+```
+
+```{r}
+kruskal.test(Shannon~year, data = alpha_tab)
+```
+
+
+## metagenomeSeq normalization
 
 Here the phyloseq object is transformed into a metagenomeSeq object for normalization.  The normalization factor is calculated, and then applied to the object. A matrix of these normalized values are then output for futher analysis. This is performed rather than rareification, to preserve the diversity of the dataset.
 
@@ -320,7 +393,7 @@ ps.ms.norm <- cumNorm(ps.ms, p = ps.ms_normfactor)
 normalizedMatrix <- MRcounts(ps.ms.norm, norm = TRUE)
 ```
 
-###Normalized phyloseq object
+### Normalized phyloseq object
 Now the object that was normalized above will be integrated into a new phyloseq object
 ```{r normalized_phyloseq}
 ps_trans <- ps
@@ -329,9 +402,9 @@ otu_table(ps_trans) <- otu_table(normalizedMatrix, taxa_are_rows = TRUE)
 
 
 
-#Statistical Analysis
+# Statistical Analysis
 
-##PERMANOVA using adonis
+## PERMANOVA using adonis
 
 Since there are some variables that are do not contain data for some samples, all statistical analyses must be preceded by a subsetted table for that variable, to only test samples who have values for that variable. Since reveg samples are the only ones with  flora data, we will subset those to come back to later. Since there is a large chunk of data missing for 2005, this applies as well. 
 
@@ -359,79 +432,22 @@ adonis(phyloseq::distance(ps_trans_completeVariables, method="bray") ~ year, dat
 
 ## Pairwise permanova
 
-```{r pairwise permanova by soil type}
+```{r pairwise permanova by soil type, warning=FALSE}
 micro.dist<-vegdist(decostand(normalizedMatrix, method="hellinger"), method="bray")
 
 pairwise.perm.manova(micro.dist, metadata$soil_type, p.method="fdr")
 ```
 
-```{r pairwise permanova by year}
+```{r pairwise permanova by year, warning=FALSE}
 pairwise.perm.manova(micro.dist, metadata$year, p.method="fdr")
 ```
 
-```{r pairwise permanova by soil and year}
+```{r pairwise permanova by soil and year, message=FALSE, warning=FALSE}
 pairwise.perm.manova(micro.dist, metadata$soil_year, p.method="fdr")
 ```
 
 
-##IndVal - Significant ESV determination
-
-```{r generate.tax.summary function}
-generate.tax.summary<-function(otu, tax.table) {
-  tax2.summary<-as.data.frame(apply((apply(otu, 1, function(x) by(x, tax.table$Phylum, sum))), 2, function(x){x/sum(x)}))
-  tax3.summary<-as.data.frame(apply((apply(otu, 1, function(x) by(x, tax.table$Class, sum))), 2, function(x){x/sum(x)}))
-  tax4.summary<-as.data.frame(apply((apply(otu, 1, function(x) by(x, tax.table$Order, sum))), 2, function(x){x/sum(x)}))
-  tax5.summary<-as.data.frame(apply((apply(otu, 1, function(x) by(x, tax.table$Family, sum))), 2, function(x){x/sum(x)}))
-  tax6.summary<-as.data.frame(apply((apply(otu, 1, function(x) by(x, tax.table$Genus, sum))), 2, function(x){x/sum(x)}))
-  return(list(Phylum=tax2.summary, Class=tax3.summary, Order=tax4.summary, Family=tax5.summary, Genus=tax6.summary))
-}
-
-```
-
-```{r phylogeneticSummaries}
-normalizedMatrix_sampleaAreRows <- t(normalizedMatrix)
-
-micro.tax.summary<-generate.tax.summary(otu=as.data.frame(normalizedMatrix), tax.table=as.data.frame(taxa))
-
-micro.species<-micro.tax.summary$Species
-micro.genera<-micro.tax.summary$Genus
-micro.class<-micro.tax.summary$Class
-micro.family<-micro.tax.summary$Family
-micro.order<-micro.tax.summary$Order
-micro.phylum<-micro.tax.summary$Phylum
-```
-
-
-```{r indval}
-#crashes R session for some reason
-#indval.reveg <- as.data.frame(indval(micro.family, metadata$soil_type, numitr=1000))
-```
-
-Still trying to get this one to work as well, as of 1/18/19
-```{r indval_titan2}
-reveg_grp <- read.csv2("Reveg_grp_indval.csv", header=TRUE, sep = ",", fileEncoding="UTF-8-BOM")
-rownames(reveg_grp) <- reveg_grp[,1]
-reveg_grp["SampleID"] <- NULL
-
-soil_grp <- read.csv2("Soil_grp_indval.csv", header=TRUE, sep = ",", fileEncoding="UTF-8-BOM")
-substrate_grp <- read.csv2("Substrate_grp_indval.csv", header=TRUE, sep = ",", fileEncoding="UTF-8-BOM")
-
-combined_grp <- as.matrix(read.csv2("Combined_grp_indval.csv", header=TRUE, sep = ",", fileEncoding="UTF-8-BOM"))
-rownames(combined_grp) <- combined_grp[,1]
-combined_grp["SampleID"] <- NULL
-
-invalp_family_output <- TITAN2:::indvalp(combined_grp, as.matrix(t(micro.family)))
-invalp_order_output <- TITAN2:::indvalp(combined_grp, as.matrix(t(micro.order)))
-invalp_genera_output <- TITAN2:::indvalp(combined_grp, as.matrix(t(micro.genera)))
-invalp_phylum_output <- TITAN2:::indvalp(combined_grp, as.matrix(t(micro.phylum)))
-
-# indval_family_output <- TITAN2:::indval(reveg_grp, as.matrix(t(micro.family)), allscores = FALSE)
-
-getivz_family_output <- TITAN2:::getivz(as.matrix(combined_grp_test), as.matrix(t(micro.family)), ivTot = FALSE, nPerm = 250, numClass = 3, imax = TRUE) 
-```
-It seems as if there are no indicator species for this set. Unsure if these results are from code error or true result. Still working on this issue.
-
-#Graphing
+# Graphing
 Significance is not automatically denoted on the images, and will be added post generation, based off the results of the statistics above. To generate an SVG from this code put in the following code at the beginning of the graphing code, followed by dev.off() immediately following the graphing code.
 
 svg(file="Name.svg",
@@ -454,6 +470,115 @@ plot_bar(phylumGlommed, x="soil_year", fill="Phylum") +
 ```
 
 
+## Table of most abundant Phyla
+```{r}
+find.top.taxa <- function(x,taxa,num){
+  require(phyloseq)
+  require(magrittr)
+  
+  top.taxa <- tax_glom(x, taxa)
+  otu <- otu_table(top.taxa) # remove the transformation if using a merge_sample object
+  tax <- tax_table(top.taxa)
+  j1 <- apply(otu,1,sort,index.return=T, decreasing=T) # modifying which.max to return a list of sorted index
+  j2 <- lapply(j1,'[[',"ix") # select for index
+
+  #k <- j[!duplicated(j)] # Replaced with unique() below
+  l <- data.frame(unique(tax@.Data[unlist(j2),]))
+  m <- data.frame(otu@.Data[,unique(unlist(j2))])
+  #s <- as.name(taxa) # This isn't necessary!
+  colnames(m) = l[,taxa]
+  n <- apply(m,1,sort,index.return=T, decreasing=T) %>%
+    lapply('[[',"ix") %>%  # Extract index
+    lapply(head,n=num) # This to returns the top x tax
+  # I want to apply a list of list of index to obtains a list of list of translated names
+  
+  
+  # https://stackoverflow.com/questions/31561238/lapply-function-loops-on-list-of-lists-r
+  p <- list()
+  for(i in 1:length(n)){
+    p[[i]]<- colnames(m)[n[[i]]]
+  }
+  m$taxa <- p # replacing [,taxa], but now the new column is called "taxa" instead of the inputted taxonomic rank
+  return(m)
+}
+
+
+
+```
+
+This is throwing an error, need to come back to this. 1/14/2020
+```{r}
+# Test
+find.top.taxa(phylumGlommed,"Phylum",25)$taxa # Here are the top 25 most abundant genera per sample
+```
+
+```{r}
+find.top.taxa <- function(x,taxa){
+  require(phyloseq)
+  top.taxa <- tax_glom(x, taxa)
+  otu <- otu_table(t(top.taxa)) # remove the transformation if using a merge_sample object
+  tax <- tax_table(top.taxa)
+  j<-apply(otu,1,which.max)
+  k <- j[!duplicated(j)]
+  l <- data.frame(tax[k,])
+  m <- data.frame(otu[,k])
+  s <- as.name(taxa)
+  colnames(m) = l[,taxa]
+  n <- colnames(m)[apply(m,1,which.max)]
+  m[,taxa] <- n
+  return(m)
+}
+
+```
+
+```{r}
+find.top.taxa(ps_trans,"Phylum")
+```
+
+```{r}
+find.top.taxa2 <- function(x,taxa,num){
+  require(phyloseq)
+  require(magrittr)
+  
+  top.taxa <- tax_glom(x, taxa)
+  otu <- otu_table(top.taxa) # remove the transformation if using a merge_sample object
+  tax <- tax_table(top.taxa)
+  j1 <- apply(otu,1,sort,index.return=T, decreasing=T) # modifying which.max to return a list of sorted index
+  j2 <- lapply(j1,'[[',"ix") # select for index
+
+  #k <- j[!duplicated(j)] # Replaced with unique() below
+  l <- data.frame(unique(tax@.Data[unlist(j2),]))
+  m <- data.frame(otu@.Data[,unique(unlist(j2))])
+  #s <- as.name(taxa) # This isn't necessary!
+  colnames(m) = l[,taxa]
+  n <- apply(m,1,sort,index.return=T, decreasing=T) %>%
+    lapply('[[',"ix") %>%  # Extract index
+    lapply(head,n=num) # This to returns the top x tax
+  # I want to apply a list of list of index to obtains a list of list of translated names
+  
+  
+  # https://stackoverflow.com/questions/31561238/lapply-function-loops-on-list-of-lists-r
+  p <- list()
+  for(i in 1:length(n)){
+    p[[i]]<- colnames(m)[n[[i]]]
+  }
+  m$taxa <- p # replacing [,taxa], but now the new column is called "taxa" instead of the inputted taxonomic rank
+  return(m)
+}
+```
+
+```{r}
+top_taxa_tbl <- find.top.taxa2(ps,"Phylum",25)$taxa # Here are the top 25 most abundant genera per sample
+```
+
+```{r}
+# ps_phylum <- tax_glom(ps_trans, taxrank = "Phylum")
+# Phylum20 = names(sort(taxa_sums(ps_phylum), TRUE)[1:20])
+# prune_samples(Phylum20, ps_phylum)
+# subset_taxa(ps_trans, Phylum==Phylum20)
+```
+
+
 
 ## Beta Diversity 
 
@@ -461,8 +586,6 @@ plot_bar(phylumGlommed, x="soil_year", fill="Phylum") +
 ```{r total ordination}
 ordBC = ordinate(ps_trans, method = "NMDS", distance = "bray")
 ```
-
-
 
 ```{r plot total ordination}
 plot_ordination(ps_trans, ordBC, color = "soil_type") + 
@@ -472,16 +595,21 @@ plot_ordination(ps_trans, ordBC, color = "soil_type") +
   scale_color_brewer(palette = "Dark2", name = "Soil Type")
 ```
 
-```{r}
+```{r year integer conversion}
 ps_trans@sam_data[["year"]] <- as.integer(ps_trans@sam_data[["year"]])
-plot_ordination(ps_trans, ordBC, color = "soil_type") + 
-  geom_point(mapping = aes(size = year)) +
-  ggtitle("Bray Curtis NMDS for all Soil Types by Year") +
-  scale_color_brewer(palette = "Dark2", name = "Soil Type")+
-  scale_size_continuous(name = "Year", labels = c("1997", "2002", "2003", "2005", "2008", "2011", "2015")) 
+
 ```
 
-## Subset phyloseq objects by soil type
+```{r NMDS by type and year}
+
+plot_ordination(ps_trans, ordBC, color = "soil_type") + 
+  geom_point(mapping = aes(size = as.factor(year))) +
+  ggtitle("Bray Curtis NMDS for all Soil Types by Year") +
+  scale_color_brewer(palette = "Dark2", name = "Soil Type")+
+  scale_size_discrete(name = "Year", labels = c("1997", "2002", "2003", "2005", "2008", "2011", "2015")) 
+```
+
+## Beta diversity by soil type
 
 ```{r}
 
@@ -582,16 +710,121 @@ substrate_lm <-lm(bd ~ year, data = plot.bd.substr)
 plot(substrate_lm)
 ```
 
-##Merged Bray-Curtis analyses
+## Merged Bray-Curtis analyses
 
-###Merging the individual data frames back together. 
+### Merging the individual data frames back together. 
 ```{r merged_BrayCurtis}
 plot.bd.merged <- rbind(plot.bd.soil, plot.bd.reveg, plot.bd.substr)
 
 aggregate(bd ~ Sample.type + year, data = plot.bd.merged, mean)
 ```
+## Beta Diversity Distance to Centroid
 
-###Kruskal Tests on Bray-Curtis values
+```{r distance to centroid by sample type}
+ggplot(plot.bd.merged,
+       aes(x = Sample.type, y=bd, fill=Sample.type)) +
+  ggtitle("Beta Diversity Measures by Sample Type") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha=0.5, size=2, pch=21) +
+  ggtitle("Beta Diversity") +
+ # scale_fill_manual(values=c(st.colors))+
+  xlab("") +
+  ylab("Distance to centroid") +
+  theme_bw()+
+  scale_fill_brewer(palette = "Dark2", name = "Soil Type")+
+ # facet_wrap(~Sample.type, dir = "v", scales = "free_y")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="none", 
+        axis.text.x = element_text(angle = 0, hjust = 0.5, size=12, color = "black"), 
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"))
+```
+
+```{r BD by year}
+ggplot(plot.bd.merged,
+       aes(x = year, y=bd, fill=year)) +
+  ggtitle("Beta Diversity Measures by Year") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha=0.5, size=2, pch=21) +
+  # scale_fill_manual(values=c(st.colors))+
+  xlab("") +
+  ylab("Distance to centroid") +
+  theme_bw()+
+  # facet_wrap(~Sample.type, dir = "v", scales = "free_y")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="none", 
+        axis.text.x = element_text(angle = 0, hjust = 0.5, size=12, color = "black"), 
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"))
+```
+
+```{r Plot by Year with facet wrap for soil type}
+ggplot(plot.bd.merged,
+       aes(x = year, y=bd, fill=year)) +
+  ggtitle("Beta Diversity Measures by Sample Type over Time") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha=0.5, size=2, pch=21) +
+  # scale_fill_manual(values=c(st.colors))+
+  xlab("") +
+  ylab("Distance to centroid") +
+  theme_bw()+
+  facet_wrap(~Sample.type, dir = "v", scales = "free_y")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="none", 
+        axis.text.x = element_text(angle = 0, hjust = 0.5, size=12, color = "black"), 
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"))
+```
+
+
+```{r BD distance to centroid - line graph over time}
+
+plot.bd.merged$bd <- as.double(plot.bd.merged$bd)
+plot.bd.merged$year <- as.integer(as.character(plot.bd.merged$year))
+plot.bd.merged$Sample.type <- as.factor(as.character(plot.bd.merged$Sample.type))
+
+ggplot(plot.bd.merged,
+       aes(x = year, y=bd, color=Sample.type, group=Sample.type)) +
+  ggtitle("Beta Diversity Distance to Centroid over Time") +
+  geom_jitter(alpha=1, size=2, pch=21) +
+  stat_summary(fun.y="mean", geom="line")+
+  scale_x_continuous("Year",breaks=unique(plot.bd.merged$year))+
+  ylab("Distance to Centroid") +
+  scale_colour_brewer(palette = "Dark2", name = "Soil Type")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="right",
+        axis.text.x = element_text(angle = 45, hjust = 0.5, size=12, color = "black"),
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"))
+```
+
+
+```{r Plot by Soil type with facet wrap for year}
+ggplot(plot.bd.merged,
+       aes(x = Sample.type, y=bd, fill= Sample.type)) +
+  ggtitle("Beta Diversity Measures by Sample Type and Year") +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha=0.5, size=2, pch=21) +
+  # scale_fill_manual(values=c(st.colors))+
+  xlab("") +
+  ylab("Distance to centroid") +
+  theme_bw()+
+  scale_fill_brewer(palette = "Dark2", name = "Soil Type")+
+  facet_wrap(~year, dir = "v", scales = "free_y")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="none", 
+        axis.text.x = element_text(angle = 15, hjust = 0.5, size=12, color = "black"), 
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"))
+```
+
+
+### Kruskal Tests on Bray-Curtis values
 
 ```{r kruskal_BrayCurtis}
 
@@ -599,7 +832,7 @@ kruskal.test(Sample.type ~ bd, data = plot.bd.merged)
 kruskal.test(year ~ bd, data = plot.bd.merged)
 ```
 
-###Wilcox Test
+### Wilcox Test
 ```{r wilcox_BrayCurtis}
 pairwise.wilcox.test(plot.bd.merged$bd, 
                      plot.bd.merged$Sample.type,
@@ -610,105 +843,126 @@ pairwise.wilcox.test(plot.bd.merged$bd,
 ## NMDS with radiating vectors of significant variables
 
 ### Revegetation NMDS with Vectors
-This only ends up keeping the revegetation samples, since they are the only ones that underwent every analysis. 
 
-```{r message=FALSE}
-variables <- dplyr::select(metadata, SampleID, water_pH, CaCl2_pH, organic_matter, Available.P, Remaining.P, potassium, Kcmol, sulfur, calcium, magnesium, aluminum, acidity_potential, Na_CTC, percent_V, percent_m, Ca_Mg, Ca_K, Mg_K, Ca_CEC, Mg_CEC, K_CEC, H.Al_T, Na_CTC, boron, zinc, iron, manganese, copper, total_nitrogen, course_sand, fine_sand, silt, clay, d13C, percent_C, percent_vol, percent_dC3, percent_dC4, macroaggregates_percent, ugg_fraction_percent, s_and_c_fraction_percent, r_fraction_percent, sum_percent)
 
-variables <- dplyr::select(variables, -c(SampleID))
+Selecting variables that we're interested in understanding their influence on NMDS ordination.
 
-variables_numeric <- sapply(variables, as.numeric)
-row.names(variables_numeric) <- rownames(variables) 
+This only ends up keeping the revegetation samples, since they are the only ones that underwent every analysis. Analysis of all samples is below.
+
+```{r selecting variables}
+variables <- dplyr::select(metadata, water_pH, CaCl2_pH, organic_matter, Available.P, Remaining.P, potassium, Kcmol, sulfur, calcium, magnesium, aluminum, acidity_potential, Na_CTC, percent_V, percent_m, Ca_Mg, Ca_K, Mg_K, Ca_CEC, Mg_CEC, K_CEC, H.Al_T, Na_CTC, boron, zinc, iron, manganese, copper, total_nitrogen, course_sand, fine_sand, silt, clay, d13C, percent_C, percent_vol, percent_dC3, percent_dC4, macroaggregates_percent, ugg_fraction_percent, s_and_c_fraction_percent, r_fraction_percent, sum_percent)
 
 
 variables_complete <- variables[complete.cases(variables),]
-
-nmds.ord = phyloseq::ordinate(ps_trans, method = "NMDS", distance = "bray")
-nmds.ord.scores <- scores(nmds.ord, display="sites")
-nmds.ord.complete <- as.data.frame(nmds.ord.scores[rownames(nmds.ord.scores) %in% rownames(variables_complete),])
+```
 
 
-#ENVFIT to correlate variables to distance matrix
-fit <- envfit(nmds.ord.complete, variables_complete, permutations = 999, na.rm=TRUE)
-scores(fit, "vectors")
-fit
+```{r reveg ordination}
+nmds.ord.reveg = phyloseq::ordinate(ps.reveg, method = "NMDS", distance = "bray")
+nmds.ord.scores.reveg <- scores(nmds.ord.reveg, display="sites")
+nmds.ord.complete.reveg <- as.data.frame(nmds.ord.scores.reveg[rownames(nmds.ord.scores.reveg) %in% rownames(variables_complete),])
+```
 
+### ENVFIT to correlate variables to distance matrix
+Transform envfit object into a dataframe that can be used in ggplot, at the same time select only the vectors that are significant (p value less than 0.5)
+```{r reveg enfit, message=FALSE, warning=FALSE}
 
+fit <- envfit(nmds.ord.complete.reveg, variables_complete, permutations = 999, na.rm=TRUE)
 
-#Transform envfit object into a dataframe that can be used in ggplot, at the same time select only the vectors that are significant (p value less than 0.5)
 A <- as.list(fit$vectors)
 pvals <- as.data.frame(A$pvals)
+colnames(pvals) <- "pvals"
 arrows <- as.data.frame(A$arrows*sqrt(A$r))
 C <- cbind(arrows, pvals)
 V <- subset(C, pvals<0.05)
 V <- cbind(V, Species = rownames(V))
 
-
-ggplot(data = nmds.ord.complete, aes(NMDS1, NMDS2)) + 
-  geom_point(mapping = aes(shape = soil_type),size = 5) +
-  geom_segment(data=V,aes(x=0,xend=NMDS1,y=0,yend=NMDS2),
-               arrow = arrow(length = unit(0.5, "cm")),colour="grey") + 
-  geom_text(data=V,aes(x=NMDS1,y=NMDS2,label=Species),size=3)+
-  ggtitle("Revegetation NMDS plot with Significance Vectors") +
-  scale_color_brewer(palette = "Dark2", name = "Soil Type")+
-  guides(shape = guide_legend(title="Management")) +
-  #guides(color = guide_legend(title="Management")) +
-  coord_fixed()
-
 ```
+
+Plotting the NMDS ordination, with overlaying vectors of significance. 
+```{r reveg envfit plot}
+plot_ordination(ps.reveg, nmds.ord.reveg, color = "soil_type") + 
+  geom_point(mapping = aes(shape = soil_type), size = 5) +
+  ggtitle("Bray Curtis NMDS for Revegetation with Significance Vectors") +
+  scale_shape_discrete(name = "Soil Type") +
+  scale_color_brewer(palette = "Dark2", name = "Soil Type") +
+  geom_segment(data=V,
+               aes(x=0,xend=NMDS1,y=0,yend=NMDS2),
+               arrow = arrow(length = unit(0.2, "cm")),
+               colour="black")+
+  geom_label_repel(data=V, 
+                   aes(x=NMDS1, y=NMDS2, label=(paste0(Species, "\np =", pvals))),
+                   colour="black", 
+                   segment.size = 0.2,
+                   segment.color = "grey50",
+                   force = 2)
+```
+
+
 
 ## Analysis with all samples, not just those with complete variables. 
 
-```{r message=FALSE}
-variables <- dplyr::select(metadata, SampleID, water_pH, CaCl2_pH, organic_matter, Available.P, Remaining.P, potassium, Kcmol, sulfur, calcium, magnesium, aluminum, acidity_potential, Na_CTC, percent_V, percent_m, Ca_Mg, Ca_K, Mg_K, Ca_CEC, Mg_CEC, K_CEC, H.Al_T, Na_CTC, boron, zinc, iron, manganese, copper, total_nitrogen, course_sand, fine_sand, silt, clay, d13C, percent_C, percent_vol, percent_dC3, percent_dC4, macroaggregates_percent, ugg_fraction_percent, s_and_c_fraction_percent, r_fraction_percent, sum_percent)
-
-variables <- dplyr::select(variables, -c(SampleID))
-
-variables_numeric <- sapply(variables, as.numeric)
-row.names(variables_numeric) <- rownames(variables) 
-
-#This only ends up keeping the revegetation samples, since they are the only ones that underwent every analysis. 
-#variables_complete <- variables[complete.cases(variables),]
-
+```{r}
 nmds.ord = phyloseq::ordinate(ps_trans, method = "NMDS", distance = "bray")
 nmds.ord.scores <- scores(nmds.ord, display="sites")
-nmds.ord.noncomplete <- as.data.frame(nmds.ord.scores[rownames(nmds.ord.scores) %in% rownames(variables),])
-
-nmds.ord.noncomplete <- cbind(nmds.ord.noncomplete, metadata[, "soil_type"][match(rownames(nmds.ord.noncomplete), rownames(metadata))])
-
-
-
-#ENVFIT to correlate variables to distance matrix
-fit <- envfit(nmds.ord.noncomplete, variables, permutations = 999)
-scores(fit, "vectors")
-fit
-
-
-
-#Transform envfit object into a dataframe that can be used in ggplot, at the same time select only the vectors that are significant (p value less than 0.5)
-A <- as.list(fit$vectors)
-pvals <- as.data.frame(A$pvals)
-arrows <- as.data.frame(A$arrows*sqrt(A$r))
-C <- cbind(arrows, pvals)
-V <- subset(C, pvals<0.05)
-V <- cbind(V, Species = rownames(V))
-
-
-ggplot(data = nmds.ord.noncomplete, aes(NMDS1, NMDS2)) + 
-  geom_point(size = 5) +
-  geom_segment(data=V,aes(x=0,xend=NMDS1,y=0,yend=NMDS2),
-               arrow = arrow(length = unit(0.5, "cm")),colour="grey") + 
-  geom_text(data=V,aes(x=NMDS1,y=NMDS2,label=Species),size=3)+
-  ggtitle("Revegetation NMDS plot with Significance Vectors") + 
-  guides(shape = guide_legend(title="Soil Type")) +
-  guides(color = guide_legend(title="Soil Type")) +
-  coord_fixed()
 
 ```
 
-# Random Forest Analysis - Second Try
+
+This envfit is run with all variables defined above, not just complete case samples. 
+**There were no variables that were significant p<0.05, this graph shows all variables that were calculated to influence, regardless of significance**
+
+```{r message=FALSE, warning=FALSE}
+#ENVFIT to correlate variables to distance matrix
+fit_allsamples <- envfit(nmds.ord.scores, variables, permutations = 999, na.rm = TRUE)
+# scores(fit_allsamples, "vectors")
+# fit_allsamples
+
+#Transform envfit object into a dataframe that can be used in ggplot, at the same time select only the vectors that are significant (p value less than 0.5)
+A_allsamples <- as.list(fit_allsamples$vectors)
+pvals_allsamples <- as.data.frame(A_allsamples$pvals)
+colnames(pvals_allsamples) <- "pvals"
+arrows_allsamples <- as.data.frame(A_allsamples$arrows*sqrt(A_allsamples$r))
+C_allsamples <- cbind(arrows_allsamples, pvals_allsamples)
+
+#No p-values less than 0.05
+#V <- subset(C, pvals<0.05)
+
+#No p-values less than 0.05 - showing p-values less than 1
+V_allsamples <- subset(C_allsamples, pvals<1)
+V_allsamples <- cbind(V_allsamples, Species = rownames(V_allsamples))
+```
+
+This plot shows vectors for each variable that was calculated to influence the NMDS plot. The position and length of the arrow have been calculated to reflect their influence on the community composition.
+
+```{r}
+
+plot_ordination(ps_trans, nmds.ord, color = "soil_type") + 
+  geom_point(mapping = aes(shape = soil_type), size = 5) +
+  ggtitle("Bray Curtis NMDS with Influence Vectors") +
+  scale_shape_discrete(name = "Soil Type") +
+  scale_color_brewer(palette = "Dark2", name = "Soil Type") +
+  geom_segment(data=V_allsamples,
+               aes(x=0,xend=NMDS1,y=0,yend=NMDS2),
+               arrow = arrow(length = unit(0.2, "cm")),
+               colour="black")+
+  geom_label_repel(data=V_allsamples, 
+                   aes(x=NMDS1, y=NMDS2, label=(paste0(Species, "\np =", pvals))),
+                   colour="black", 
+                   segment.size = 0.2,
+                   segment.color = "grey50",
+                   force=2)
+
+
+```
+
+
+
+# Random Forest Analysis 
 
 Random forest analysis to identify key OTUs by each site. Code and tutorial from https://rpubs.com/michberr/randomforestmicrobe, but not updated since 2015.
+
+Note that this analysis **did not exclude archaea**, therefore they are included in the Random Forest and correlation plots. 
 
 ```{r pruning low abundance taxa}
 cat(ntaxa(ps_trans), "OTUs in this phyloseq object")
@@ -775,6 +1029,607 @@ otunames <- imp.20$predictors
 r <- rownames(tax_table(ps_trans_renamed)) %in% otunames
 knitr::kable(tax_table(ps_trans_renamed)[r, ])
 ```
+
+
+
+# Indicator Species
+
+Using the multipatt function of indval package (https://cran.r-project.org/web/packages/indicspecies/vignettes/indicspeciesTutorial.pdf)
+Community data matrix: ps_trans_renamed@otu_table. This table has replaced sequence with OTU# for ease of visualization.
+Classification of sites: site_classification (defined below)
+```{r}
+site_classification <- metadata$soil_type
+# rownames(site_classification) <- rownames(metadata)
+
+community_data <- as.data.frame(t(ps_trans_renamed@otu_table))
+```
+
+```{r}
+indval = multipatt(community_data, site_classification, control = how(nperm=9999))
+capture.output(summary(indval), file="indvalSummary.txt")
+summary(indval)
+
+```
+
+
+
+```{r}
+indval_sigOTU <- subset(indval[["sign"]], indval[["sign"]]$p.value <= 0.05)
+
+# otunames_indval <- rownames(indval[["sign"]]$p.value < 0.05)
+r_ind <- rownames(tax_table(ps_trans_renamed)) %in% rownames(indval_sigOTU)
+knitr::kable(tax_table(ps_trans_renamed)[r_ind, ])
+write.csv(tax_table(ps_trans_renamed)[r_ind, ], file="invalOTU_taxonomic.csv")
+```
+
+
+
+
+# Correlation Plots
+Code from Jordan 1/22/19. 
+
+```{r generate.tax.summary function}
+generate.tax.summary<-function(otu, tax.table) {
+  tax2.summary<-as.data.frame(apply((apply(otu, 1, function(x) by(x, tax.table$Phylum, sum))), 2, function(x){x/sum(x)}))
+  tax3.summary<-as.data.frame(apply((apply(otu, 1, function(x) by(x, tax.table$Class, sum))), 2, function(x){x/sum(x)}))
+  tax4.summary<-as.data.frame(apply((apply(otu, 1, function(x) by(x, tax.table$Order, sum))), 2, function(x){x/sum(x)}))
+  tax5.summary<-as.data.frame(apply((apply(otu, 1, function(x) by(x, tax.table$Family, sum))), 2, function(x){x/sum(x)}))
+  tax6.summary<-as.data.frame(apply((apply(otu, 1, function(x) by(x, tax.table$Genus, sum))), 2, function(x){x/sum(x)}))
+  return(list(Phylum=tax2.summary, Class=tax3.summary, Order=tax4.summary, Family=tax5.summary, Genus=tax6.summary))
+}
+
+```
+
+```{r phylogenetic summaries}
+normalizedMatrix_sampleaAreRows <- t(normalizedMatrix)
+
+micro.tax.summary<-generate.tax.summary(otu=as.data.frame(normalizedMatrix_sampleaAreRows), tax.table=as.data.frame(taxa))
+
+micro.species<-micro.tax.summary$Species
+micro.genera<-micro.tax.summary$Genus
+micro.class<-micro.tax.summary$Class
+micro.family<-micro.tax.summary$Family
+micro.order<-micro.tax.summary$Order
+micro.phylum<-micro.tax.summary$Phylum
+```
+
+Add column "summed" to table, and sum all relative abundances for all phyla
+```{r top 11 sorting}
+micro.phylum$summed = rowSums(micro.phylum) 
+
+attach(micro.phylum)
+micro.phylum.sort <- micro.phylum[order(-summed),] #sort phyla rows from largest to smallest in decreasing order
+detach(micro.phylum)
+
+plot(micro.phylum.sort$summed)
+
+```
+
+```{r top 10 names}
+row.names(micro.phylum.sort)[1:11]
+```
+Extracting the numbers of each phyla. 
+```{r extract abundance}
+
+taxa.df <- as.data.frame(taxa)
+normalizedMatrix.df <- as.data.frame(t(normalizedMatrix))
+
+Actinobacteria.otu<-normalizedMatrix.df[,grep("Actinobacteria", taxa.df$Phylum)]
+Proteobacteria.otu<-normalizedMatrix.df[,grep("Proteobacteria", taxa.df$Phylum)]
+Chloroflexi.otu<-normalizedMatrix.df[,grep("Chloroflexi", taxa.df$Phylum)]
+Acidobacteria.otu<-normalizedMatrix.df[,grep("Acidobacteria", taxa.df$Phylum)]
+Firmicutes.otu<-normalizedMatrix.df[,grep("Firmicutes", taxa.df$Phylum)]
+Verrucomicrobia.otu<-normalizedMatrix.df[,grep("Verrucomicrobia", taxa.df$Phylum)]
+Planctomycetes.otu<-normalizedMatrix.df[,grep("Planctomycetes", taxa.df$Phylum)]
+Euryarchaeota.otu<-normalizedMatrix.df[,grep("Euryarchaeota", taxa.df$Phylum)]
+Bacteroidetes.otu<-normalizedMatrix.df[,grep("Bacteroidetes", taxa.df$Phylum)]
+Gemmatimonadetes.otu<-normalizedMatrix.df[,grep("Gemmatimonadetes", taxa.df$Phylum)]
+WPS2.otu<-normalizedMatrix.df[,grep("WPS2", taxa.df$Phylum)]
+```
+
+Matching the metadata to extracted phyla values. 
+```{r match the metadata}
+metadata$Actinobacteria_richness<-specnumber(Actinobacteria.otu)
+metadata$Proteobacteria_richness<-specnumber(Proteobacteria.otu)
+metadata$Chloroflexi_richness<-specnumber(Chloroflexi.otu)
+metadata$Acidobacteria_richness<-specnumber(Acidobacteria.otu)
+metadata$Firmicutes_richness<-specnumber(Firmicutes.otu)
+metadata$Verrucomicrobia_richness<-specnumber(Verrucomicrobia.otu)
+metadata$Planctomycetes_richness<-specnumber(Planctomycetes.otu)
+metadata$Euryarchaeota_richness<-specnumber(Euryarchaeota.otu)
+metadata$Bacteroidetes_richness<-specnumber(Bacteroidetes.otu)
+metadata$Gemmatimonadetes_richness<-specnumber(Gemmatimonadetes.otu)
+metadata$WPS2_richness<-specnumber(WPS2.otu)
+```
+
+Generating richness tables for each treatment. 
+```{r richness table}
+Reveg_Richness <- metadata[metadata$soil_type=="Revegetation",]
+
+Soil_Richness <- metadata[metadata$soil_type=="Soil",]
+
+Subst_Richness <- metadata[metadata$soil_type=="Substrate",]
+
+```
+
+Combining the richness values for all Revegetation samples. 
+```{r reveg richness values}
+Actinobacteria_richnessReveg <- aggregate(Reveg_Richness$Actinobacteria_richness, by= list(Reveg_Richness$year), FUN= "mean")
+Proteobacteria_richnessReveg <- aggregate(Reveg_Richness$Proteobacteria_richness, by= list(Reveg_Richness$year), FUN= "mean")
+Chloroflexi_richnessReveg <- aggregate(Reveg_Richness$Chloroflexi_richness, by= list(Reveg_Richness$year), FUN= "mean")
+Acidobacteria_richnessReveg <- aggregate(Reveg_Richness$Acidobacteria_richness, by= list(Reveg_Richness$year), FUN= "mean")
+Firmicutes_richnessReveg <- aggregate(Reveg_Richness$Firmicutes_richness, by= list(Reveg_Richness$year), FUN= "mean")
+Verrucomicrobia_richnessReveg <- aggregate(Reveg_Richness$Verrucomicrobia_richness, by= list(Reveg_Richness$year), FUN= "mean")
+Planctomycetes_richnessReveg <- aggregate(Reveg_Richness$Planctomycetes_richness, by= list(Reveg_Richness$year), FUN= "mean")
+Euryarchaeota_richnessReveg <- aggregate(Reveg_Richness$Euryarchaeota_richness, by= list(Reveg_Richness$year), FUN= "mean")
+Bacteroidetes_richnessReveg <- aggregate(Reveg_Richness$Bacteroidetes_richness, by= list(Reveg_Richness$year), FUN= "mean")
+Gemmatimonadetes_richnessReveg <- aggregate(Reveg_Richness$Gemmatimonadetes_richness, by= list(Reveg_Richness$year), FUN= "mean")
+WPS2_richnessReveg <- aggregate(Reveg_Richness$WPS2_richness, by= list(Reveg_Richness$year), FUN= "mean")
+
+```
+
+
+Combining the richness values for all Soil samples.
+```{r soil richness values}
+Actinobacteria_richnessSoil <- aggregate(Soil_Richness$Actinobacteria_richness, by= list(Soil_Richness$year), FUN= "mean")
+Proteobacteria_richnessSoil <- aggregate(Soil_Richness$Proteobacteria_richness, by= list(Soil_Richness$year), FUN= "mean")
+Chloroflexi_richnessSoil <- aggregate(Soil_Richness$Chloroflexi_richness, by= list(Soil_Richness$year), FUN= "mean")
+Acidobacteria_richnessSoil <- aggregate(Soil_Richness$Acidobacteria_richness, by= list(Soil_Richness$year), FUN= "mean")
+Firmicutes_richnessSoil <- aggregate(Soil_Richness$Firmicutes_richness, by= list(Soil_Richness$year), FUN= "mean")
+Verrucomicrobia_richnessSoil <- aggregate(Soil_Richness$Verrucomicrobia_richness, by= list(Soil_Richness$year), FUN= "mean")
+Planctomycetes_richnessSoil <- aggregate(Soil_Richness$Planctomycetes_richness, by= list(Soil_Richness$year), FUN= "mean")
+Euryarchaeota_richnessSoil <- aggregate(Soil_Richness$Euryarchaeota_richness, by= list(Soil_Richness$year), FUN= "mean")
+Bacteroidetes_richnessSoil <- aggregate(Soil_Richness$Bacteroidetes_richness, by= list(Soil_Richness$year), FUN= "mean")
+Gemmatimonadetes_richnessSoil <- aggregate(Soil_Richness$Gemmatimonadetes_richness, by= list(Soil_Richness$year), FUN= "mean")
+WPS2_richnessSoil <- aggregate(Soil_Richness$WPS2_richness, by= list(Reveg_Richness$year), FUN= "mean")
+```
+
+
+Combining the richness values for all Substrate samples.
+```{r substrate richness values}
+Actinobacteria_richnessSubst <- aggregate(Subst_Richness$Actinobacteria_richness, by= list(Subst_Richness$year), FUN= "mean")
+Proteobacteria_richnessSubst <- aggregate(Subst_Richness$Proteobacteria_richness, by= list(Subst_Richness$year), FUN= "mean")
+Chloroflexi_richnessSubst <- aggregate(Subst_Richness$Chloroflexi_richness, by= list(Subst_Richness$year), FUN= "mean")
+Acidobacteria_richnessSubst <- aggregate(Subst_Richness$Acidobacteria_richness, by= list(Subst_Richness$year), FUN= "mean")
+Firmicutes_richnessSubst <- aggregate(Subst_Richness$Firmicutes_richness, by= list(Subst_Richness$year), FUN= "mean")
+Verrucomicrobia_richnessSubst <- aggregate(Subst_Richness$Verrucomicrobia_richness, by= list(Subst_Richness$year), FUN= "mean")
+Planctomycetes_richnessSubst <- aggregate(Subst_Richness$Planctomycetes_richness, by= list(Subst_Richness$year), FUN= "mean")
+Euryarchaeota_richnessSubst <- aggregate(Subst_Richness$Euryarchaeota_richness, by= list(Subst_Richness$year), FUN= "mean")
+Bacteroidetes_richnessSubst <- aggregate(Subst_Richness$Bacteroidetes_richness, by= list(Subst_Richness$year), FUN= "mean")
+Gemmatimonadetes_richnessSubst <- aggregate(Subst_Richness$Gemmatimonadetes_richness, by= list(Subst_Richness$year), FUN= "mean")
+WPS2_richnessSubst <- aggregate(Subst_Richness$WPS2_richness, by= list(Reveg_Richness$year), FUN= "mean")
+```
+
+Correcting the column names for each table to reflect the phyla. 
+```{r column name correction}
+colnames(Actinobacteria_richnessReveg)[2] <- "Actinobacteria"
+colnames(Proteobacteria_richnessReveg)[2] <- "Proteobacteria"
+colnames(Chloroflexi_richnessReveg)[2] <- "Chloroflexi"
+colnames(Acidobacteria_richnessReveg)[2] <- "Acidobacteria"
+colnames(Firmicutes_richnessReveg)[2] <- "Firmicutes"
+colnames(Verrucomicrobia_richnessReveg)[2] <- "Verrucomicrobia"
+colnames(Planctomycetes_richnessReveg)[2] <- "Planctomycetes"
+colnames(Euryarchaeota_richnessReveg)[2] <- "Euryarchaeota"
+colnames(Bacteroidetes_richnessReveg)[2] <- "Bacteroidetes"
+colnames(Gemmatimonadetes_richnessReveg)[2] <- "Gemmatimonadetes"
+colnames(WPS2_richnessReveg)[2] <- "WPS2"
+
+colnames(Actinobacteria_richnessSoil)[2] <- "Actinobacteria"
+colnames(Proteobacteria_richnessSoil)[2] <- "Proteobacteria"
+colnames(Chloroflexi_richnessSoil)[2] <- "Chloroflexi"
+colnames(Acidobacteria_richnessSoil)[2] <- "Acidobacteria"
+colnames(Firmicutes_richnessSoil)[2] <- "Firmicutes"
+colnames(Verrucomicrobia_richnessSoil)[2] <- "Verrucomicrobia"
+colnames(Planctomycetes_richnessSoil)[2] <- "Planctomycetes"
+colnames(Euryarchaeota_richnessSoil)[2] <- "Euryarchaeota"
+colnames(Bacteroidetes_richnessSoil)[2] <- "Bacteroidetes"
+colnames(Gemmatimonadetes_richnessSoil)[2] <- "Gemmatimonadetes"
+colnames(WPS2_richnessSoil)[2] <- "WPS2"
+
+colnames(Actinobacteria_richnessSubst)[2] <- "Actinobacteria"
+colnames(Proteobacteria_richnessSubst)[2] <- "Proteobacteria"
+colnames(Chloroflexi_richnessSubst)[2] <- "Chloroflexi"
+colnames(Acidobacteria_richnessSubst)[2] <- "Acidobacteria"
+colnames(Firmicutes_richnessSubst)[2] <- "Firmicutes"
+colnames(Verrucomicrobia_richnessSubst)[2] <- "Verrucomicrobia"
+colnames(Planctomycetes_richnessSubst)[2] <- "Planctomycetes"
+colnames(Euryarchaeota_richnessSubst)[2] <- "Euryarchaeota"
+colnames(Bacteroidetes_richnessSubst)[2] <- "Bacteroidetes"
+colnames(Gemmatimonadetes_richnessSubst)[2] <- "Gemmatimonadetes"
+colnames(WPS2_richnessSubst)[2] <- "WPS2"
+```
+
+Binding the tables together for each treatment.
+```{r binding tables}
+Cbind_RevegRichness <- cbind(Actinobacteria_richnessReveg, Proteobacteria_richnessReveg[2], Chloroflexi_richnessReveg[2], Acidobacteria_richnessReveg[2], Firmicutes_richnessReveg[2], Verrucomicrobia_richnessReveg[2], Planctomycetes_richnessReveg[2], Euryarchaeota_richnessReveg[2], Bacteroidetes_richnessReveg[2], Gemmatimonadetes_richnessReveg[2], WPS2_richnessReveg[2])
+row.names(Cbind_RevegRichness) <- Cbind_RevegRichness$Group.1
+Cbind_RevegRichness <- Cbind_RevegRichness[,2:11]
+write.table(Cbind_RevegRichness, "Reveg_Richness_heatmap.txt", sep="\t", quote=F, row.names=T, col.names=NA) 
+
+Cbind_SoilRichness <- cbind(Actinobacteria_richnessSoil, Proteobacteria_richnessSoil[2], Chloroflexi_richnessSoil[2], Acidobacteria_richnessSoil[2], Firmicutes_richnessSoil[2], Verrucomicrobia_richnessSoil[2], Planctomycetes_richnessSoil[2], Euryarchaeota_richnessSoil[2], Bacteroidetes_richnessSoil[2], Gemmatimonadetes_richnessSoil[2], WPS2_richnessSoil[2])
+row.names(Cbind_SoilRichness) <- Cbind_SoilRichness$Group.1
+Cbind_SoilRichness <- Cbind_SoilRichness[,2:11]
+write.table(Cbind_SoilRichness, "Soil_Richness_heatmap.txt", sep="\t", quote=F, row.names=T, col.names=NA) 
+
+Cbind_SubstRichness <- cbind(Actinobacteria_richnessSubst, Proteobacteria_richnessSubst[2], Chloroflexi_richnessSubst[2], Acidobacteria_richnessSubst[2], Firmicutes_richnessSubst[2], Verrucomicrobia_richnessSubst[2], Planctomycetes_richnessSubst[2], Euryarchaeota_richnessSubst[2], Bacteroidetes_richnessSubst[2], Gemmatimonadetes_richnessSubst[2], WPS2_richnessSubst[2])
+row.names(Cbind_SubstRichness) <- Cbind_SubstRichness$Group.1
+Cbind_SubstRichness <- Cbind_SubstRichness[,2:11]
+write.table(Cbind_SubstRichness, "Subst_Richness_heatmap.txt", sep="\t", quote=F, row.names=T, col.names=NA) 
+```
+
+Remaning columns to match the years, converting to a matrix. 
+```{r renaming columns}
+Cbind_RevegRichness.t <- t(Cbind_RevegRichness)
+Cbind_SoilRichness.t <- t(Cbind_SoilRichness)
+Cbind_SubstRichness.t <- t(Cbind_SubstRichness)
+
+colnames(Cbind_SoilRichness.t)
+
+#Column names were in numeric order
+colnames(Cbind_RevegRichness.t) <- c("1997", "2002", "2003", "2005", "2008", "2011", "2015")
+colnames(Cbind_SoilRichness.t) <- c("1997", "2002", "2003", "2005", "2008", "2011", "2015")
+colnames(Cbind_SubstRichness.t) <- c("1997", "2002", "2003", "2005", "2008", "2011", "2015")
+
+colnames(Cbind_RevegRichness.t)
+
+Cbind_RevegRichness_Matrix <- data.matrix(Cbind_RevegRichness.t)
+Cbind_SoilRichness_Matrix <- data.matrix(Cbind_SoilRichness.t)
+Cbind_SubstRichness_Matrix <- data.matrix(Cbind_SubstRichness.t)
+```
+
+### Plotting the heatmap. 
+```{r absolute value heatmaps}
+pheatmap(Cbind_RevegRichness_Matrix, main="Absolute Phyla Richness in Revegetation Samples", display_numbers = TRUE, cluster_cols = FALSE, cluster_rows = FALSE)
+pheatmap(Cbind_SoilRichness_Matrix, main="Absolute Phyla Richness in Soil Samples", display_numbers = TRUE, cluster_cols = FALSE, cluster_rows = FALSE)
+pheatmap(Cbind_SubstRichness_Matrix, main="Absolute Phyla Richness in Substrate Samples", display_numbers = TRUE, cluster_cols = FALSE, cluster_rows = FALSE)
+
+```
+# Mantel Test
+From https://www.biostars.org/p/291756/
+```{r}
+metadata_numeric <- read.csv2("AW_Metadata_AllDataIncluded_Numeric_032119.csv", header=TRUE, sep = ",", fileEncoding="UTF-8-BOM")
+rownames(metadata_numeric) <- paste0(metadata_numeric$SampleID)
+metadata_numeric <- metadata_numeric[,-1]
+metadata_numeric <- data.matrix(metadata_numeric)
+# 
+# bray.dist.otu<-vegdist(normalizedMatrix_sampleaAreRows, method="bray")
+# bray.dist.family<-vegdist(t(micro.family), method="bray")
+# bray.dist.soil<-vegdist(metadata_numeric, method="bray", na.rm = TRUE)
+# 
+# bray.mantel<-mantel(bray.dist.otu, bray.dist.soil, method="pearson", permutations=999)
+# bray.mantel
+# graphics::plot(bray.dist.otu, bray.dist.soil)
+# 
+# bray.mantel.family<-mantel(bray.dist.family, bray.dist.soil, method="pearson", permutations=999)
+# bray.mantel.family
+# graphics::plot(bray.dist.otu, bray.dist.soil)
+# 
+# 
+# bray.dist.waterPH<-vegdist(metadata_numeric[,1], method="bray", na.rm = TRUE)
+# bray.mantel.waterPH<-mantel(bray.dist.otu, bray.dist.waterPH, method="pearson", permutations=999)
+# bray.mantel.waterPH
+
+```
+
+
+```{r}
+# pc <- prcomp(metadata_numeric, scale = TRUE, na.action="na.omit")
+# pc<- scores(pc, display = "sites", choices = 1:4)
+# edis <- vegdist(pc, method = "euclid")
+# vare.dis <- vegdist(wisconsin(sqrt(varespec)))
+# mantel(vare.dis, edis)
+
+```
+
+```{r}
+
+library(vegan)
+# getting the similarity values for the matrices. I like "Bray-Curtis" for Bio data and it seems like "Euclidean" distance works better for envi data 
+veg.dist <- vegdist(seqtab.nochim) # Bray-Curtis
+env.dist <- vegdist(scale(metadata_numeric), "euclid")
+
+# running Mantel test - I usually go for spearman correlation, as it is has less assumptions of the data set... but you can decide according to your data
+mantel(veg.dist, env.dist) # Pearson
+mantel(veg.dist, env.dist, method="spear")
+
+```
+
+
+# Pearson Correlation with Mantel significance
+
+```{r}
+
+```
+
+# Suggested Analyses from Francisco - 10/15/2020
+"Here are my suggestions:
+Results section needs a better structure and description, I suggest the following:
+   -describe the overall differences across treatments (alfa- and beta-diversities)
+   -describe the rate of succession in each treatment across the gradient. 
+   This can be done by (I) calculating and plotting the BC distances between each successive time point and (II) calculating the distance from T0. We need to do this individually per each treatment."
+
+## Overall difference across treatments - ALPHA DIVERSITY
+```{r}
+#average the replicates for first (1997) and last (2015) timepoints
+reveg_1997_alphaavg <- mean(alpha_tab$Shannon[alpha_tab$soil_year=="Revegetation_1997"])
+substrate_1997_alphaavg <- mean(alpha_tab$Shannon[alpha_tab$soil_year=="Substrate_1997"])
+soil_1997_alphaavg <- mean(alpha_tab$Shannon[alpha_tab$soil_year=="Soil_1997"])
+
+reveg_2015_alphaavg <- mean(alpha_tab$Shannon[alpha_tab$soil_year=="Revegetation_2015"])
+substrate_2015_alphaavg <- mean(alpha_tab$Shannon[alpha_tab$soil_year=="Substrate_2015"])
+soil_2015_alphaavg <- mean(alpha_tab$Shannon[alpha_tab$soil_year=="Soil_2015"])
+
+#subtract endpoint from beginning
+reveg_alpha_diff <- reveg_2015_alphaavg - reveg_1997_alphaavg
+substrate_alpha_diff <- substrate_2015_alphaavg - substrate_1997_alphaavg
+soil_alpha_diff <- soil_2015_alphaavg - soil_1997_alphaavg
+
+alpha_differences <- as.data.frame(t(tibble(reveg_alpha_diff, substrate_alpha_diff, soil_alpha_diff)))
+
+df<-data.frame("Revegetation","Substrate", "Soil")
+
+alpha_differences <- cbind(t(df), alpha_differences)
+colnames(alpha_differences) <- c("soil_type", "alpha_change")
+rownames(alpha_differences) <- t(df)
+alpha_differences = as.data.frame(alpha_differences)
+alpha_differences$alpha_change = as.numeric(alpha_differences$alpha_change)
+```
+
+```{r}
+#graph it
+
+
+ggplot(data = alpha_differences, aes(x=soil_type, y=alpha_change)) +
+  geom_bar(stat="identity", aes(fill=soil_type)) +
+  scale_fill_brewer(palette = "Dark2", name = "Soil type")+
+  xlab("Sample Type") +
+  ylab("Change in Alpha Diversity") +
+  ggtitle("Overall change in Shannon Alpha Diversity between 1997 and 2015")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="none", 
+        axis.text.x = element_text(hjust = 0.5, size=12, color = "black"), 
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"))
+  
+```
+
+```{r}
+alpha_succession <- alpha_tab %>%
+  group_by(soil_year) %>%
+  summarize(avg_Shannon = mean(Shannon), SE = sd(Shannon)/sqrt(n())) %>%
+  ungroup() %>%
+  separate(soil_year, c("Sample.type", "year")) %>%
+  group_by(Sample.type) %>%
+  mutate(delta_Shannon = avg_Shannon - avg_Shannon[year == '1997']) %>%
+  ungroup()
+```
+
+
+```{r}
+alpha_succession$year <- as.factor(alpha_succession$year)
+
+ggplot(data = alpha_succession, aes(x=year, y=delta_Shannon)) +
+  geom_bar(stat="identity", aes(fill=year)) +
+  # scale_colour_brewer(type = 'qual', palette = "Dark2") +
+  scale_fill_brewer(palette = "Dark2")+
+  xlab("Year") +
+  ylab("Change in Shannon Diversity compared to T0") +
+  facet_wrap('Sample.type')+
+  ggtitle("Change in Shannon Alpha Diversity Compared to T0 for Each Timepoint")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="none", 
+        axis.text.x = element_text(angle = 45, hjust = 0.5, vjust=0.75, size=12, color = "black"), 
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"))
+```
+
+
+
+
+### Change in Alpha Diversity compared to T0
+
+```{r}
+alpha_succession$year <- as.numeric(as.character(alpha_succession$year))
+ggplot(alpha_succession,
+       aes(x = year, y=delta_Shannon, color=Sample.type, group=Sample.type)) +
+  ggtitle("Change in Alpha Diversity compared to T0") +
+  geom_jitter(alpha=1, size=2, pch=21) +
+  stat_summary(fun.y="mean", geom="line")+
+  scale_x_continuous("Year",breaks=unique(alpha_tab$year))+
+  ylab("Change in Shannon Alpha Diversity") +
+  scale_colour_brewer(palette = "Dark2", name = "Soil Type")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="right",
+        axis.text.x = element_text(angle = 45, hjust = 0.5, size=12, color = "black"),
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"))
+```
+
+
+## Overall difference across treatments - BETA DIVERSITY
+
+```{r}
+beta_tab <- cbind(plot.bd.merged, soil_year = metadata$soil_year [match(rownames(plot.bd.merged), rownames(metadata))])
+
+#average the replicates for first (1997) and last (2015) timepoints
+reveg_1997_betaavg <- mean(beta_tab$bd[beta_tab$soil_year=="Revegetation_1997"])
+substrate_1997_betaavg <- mean(beta_tab$bd[beta_tab$soil_year=="Substrate_1997"])
+soil_1997_betaavg <- mean(beta_tab$bd[beta_tab$soil_year=="Soil_1997"])
+
+reveg_2015_betaavg <- mean(beta_tab$bd[beta_tab$soil_year=="Revegetation_2015"])
+substrate_2015_betaavg <- mean(beta_tab$bd[beta_tab$soil_year=="Substrate_2015"])
+soil_2015_betaavg <- mean(beta_tab$bd[beta_tab$soil_year=="Soil_2015"])
+
+#subtract endpoint from beginning
+reveg_beta_diff <- reveg_2015_betaavg - reveg_1997_betaavg
+substrate_beta_diff <- substrate_2015_betaavg - substrate_1997_betaavg
+soil_beta_diff <- soil_2015_betaavg - soil_1997_betaavg
+
+beta_differences <- as.data.frame(t(tibble(reveg_beta_diff, substrate_beta_diff, soil_beta_diff)))
+
+df<-data.frame("Revegetation","Substrate", "Soil")
+
+beta_differences <- cbind(t(df), beta_differences)
+colnames(beta_differences) <- c("soil_type", "beta_change")
+rownames(beta_differences) <- t(df)
+beta_differences = as.data.frame(beta_differences)
+beta_differences$beta_change = as.numeric(beta_differences$beta_change)
+```
+
+```{r}
+ggplot(data = beta_differences, aes(x=soil_type, y=beta_change)) +
+  geom_bar(stat="identity", aes(fill=soil_type)) +
+  scale_fill_brewer(palette = "Dark2", name = "Soil type")+
+  xlab("Sample Type") +
+  ylab("Change in Distance to Centroid") +
+  ggtitle("Overall Change in Distance to Centroid Between 1997 and 2015")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="none", 
+        axis.text.x = element_text(hjust = 0.5, size=12, color = "black"), 
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"))
+```
+
+## Beta Diversity Succession
+
+-describe the rate of succession in each treatment across the gradient. 
+   This can be done by (I) calculating and plotting the BC distances between each successive time point and (II) calculating the distance from T0. We need to do this individually per each treatment."
+   
+```{r}
+beta_succession <- beta_tab %>%
+  group_by(soil_year) %>%
+  summarize(avg_bd = mean(bd), SE = sd(bd)/sqrt(n())) %>%
+  ungroup() %>%
+  separate(soil_year, c("Sample.type", "year")) %>%
+  group_by(Sample.type) %>%
+  mutate(delta_bd = avg_bd - avg_bd[year == '1997']) %>%
+  ungroup()
+
+```
+
+```{r}
+#graph
+beta_succession$year <- as.factor(beta_succession$year)
+
+
+ggplot(data = beta_succession, aes(x=year, y=delta_bd)) +
+  geom_bar(stat="identity", aes(fill=year)) +
+  # scale_colour_brewer(type = 'qual', palette = "Dark2") +
+  scale_fill_brewer(palette = "Dark2")+
+  xlab("Year") +
+  ylab("Change in Distance to Centroid compared to T0") +
+  facet_wrap('Sample.type')+
+  ggtitle("Change in Distance to Centroid Compared to T0 for Each Timepoint")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="none", 
+        axis.text.x = element_text(angle = 45, hjust = 0.5, vjust=0.75, size=12, color = "black"), 
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        axis.line = element_line(colour = "black"))
+
+```
+
+
+```{r}
+beta_succession$year <- as.numeric(as.character(beta_succession$year))
+                                   
+ggplot(beta_succession,
+       aes(x = year, y=delta_bd, color=Sample.type, group=Sample.type)) +
+  ggtitle("Change in Distance to Centroid compared to T0") +
+  geom_jitter(alpha=1, size=2, pch=21) +
+  stat_summary(fun.y="mean", geom="line")+
+  scale_x_continuous("Year",breaks=unique(plot.bd.merged$year))+
+  ylab("Change in Distance to Centroid") +
+  scale_colour_brewer(palette = "Dark2", name = "Soil Type")+
+  theme(text = element_text(face = "bold", size=12, color = "black"), legend.position="right",
+        axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.75, size=12, color = "black"),
+        axis.text.y = element_text(size=12, color = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"))
+```
+
+
+## LEFSe LDA Analysis
+```{r lefse lda}
+
+# lefse.tbl <- microbiomeMarker::lefse(ps_trans, norm = 1e6, class="soil_type", subclass="year", multicls_strat = TRUE)
+
+```
+
+
+```{r}
+lefse.tbl <- microbiomeMarker::lefse(ps, norm = 1e6, class="soil_type", multicls_strat = TRUE)
+```
+
+
+```{r}
+lefse_yearSubClass.tbl <- microbiomeMarker::lefse(ps, norm = 1e6, class="soil_type", subclass = "year", multicls_strat = TRUE)
+```
+
+```{r}
+head(marker_table(lefse.tbl))
+```
+
+
+```{r}
+lefse_barplot <- plot_ef_bar(lefse.tbl, label_level = 1)+
+  scale_fill_brewer(palette = "Dark2", name = "Soil Type") +
+  facet_wrap(~soil_type)
+lefse_barplot
+```
+
+
+```{r}
+
+# Hexadecimal color specification 
+brewer.pal(n = 3, name = "Dark2")
+
+plot_cladogram(lefse.tbl, color = c(Revegetation = "blue", Soil = "red", Substrate = ""))
+```
+
+
+### Network analysis
+```{r}
+
+ps_trans@sam_data[["year"]] = as.factor(ps_trans@sam_data[["year"]])
+phyloseq::plot_net(ps_trans, color="soil_type", shape="year") + 
+  ggtitle("Bray Curtis Network Analysis of Samples") +
+  scale_color_brewer(name = "Soil Type", palette = "Dark2") + 
+  scale_shape_discrete(name = "Year")
+```
+
+
+## Time Series - metagenomeSeq, fitTimeSeries analysis
+```{r}
+mgseq_trans <- phyloseq_to_metagenomeSeq(ps_trans)
+```
+
+# ```{r}
+# 
+# normFactors(mgseq_trans) <- rnorm(ncol(mgseq_trans))
+# head(normFactors((mgseq_trans)))
+# 
+# head(libSize(mgseq_trans))
+```
+```{r}
+# libSize(mgseq_trans) <- rnorm(ncol(mgseq_trans))
+# head(libSize(mgseq_trans))
+```
+
+
+```{r}
+res <- fitTimeSeries(obj=mgseq_trans, 
+lvl = "Phylum", 
+time = "year", 
+class="soil_type", 
+id="SampleID")
+```
+
 
 
 ## Session Info
